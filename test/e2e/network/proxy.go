@@ -288,15 +288,15 @@ var _ = SIGDescribe("Proxy", func() {
 			framework.ExpectNoError(err, "Pod didn't start within time out period")
 
 			transportCfg, err := f.ClientConfig().TransportConfig()
-			framework.ExpectNoError(err, "Error accessing TransportConfig")
-			tlsCfg, err := transport.TLSConfigFor(transportCfg)
-			framework.ExpectNoError(err, "Error accessing TLSConfigFor(transportCfg)")
+			framework.ExpectNoError(err, "Error creating transportCfg")
+			restTransport, err := transport.New(transportCfg)
+			framework.ExpectNoError(err, "Error creating restTransport")
 			// Disable 301 automatic follow
 			client := &http.Client{
 				CheckRedirect: func(req *http.Request, via []*http.Request) error {
 					return http.ErrUseLastResponse
 				},
-				Transport: &http.Transport{TLSClientConfig: tlsCfg},
+				Transport: restTransport,
 			}
 
 			for _, httpVerb := range httpVerbs {
@@ -307,10 +307,6 @@ var _ = SIGDescribe("Proxy", func() {
 
 				request, err := http.NewRequest(httpVerb, urlString, nil)
 				framework.ExpectNoError(err, "processing request")
-
-				if len(f.ClientConfig().BearerToken) != 0 {
-					request.Header.Set("Authorization", "Bearer "+f.ClientConfig().BearerToken)
-				}
 
 				resp, err := client.Do(request)
 				framework.ExpectNoError(err, "processing response")
