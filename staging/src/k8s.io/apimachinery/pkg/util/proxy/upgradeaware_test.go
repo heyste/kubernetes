@@ -225,6 +225,7 @@ func TestServeHTTP(t *testing.T) {
 	}
 
 	for i, test := range tests {
+		fmt.Printf(">>>>>>>> Starting Test: %d\n", i)
 		func() {
 			backendResponse := "<html><head></head><body><a href=\"/test/path\">Hello</a></body></html>"
 			backendResponseHeader := test.responseHeader

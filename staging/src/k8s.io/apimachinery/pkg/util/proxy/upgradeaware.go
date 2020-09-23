@@ -195,12 +195,35 @@ func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 
 	loc := *h.Location
+	method := req.Method
 	loc.RawQuery = req.URL.RawQuery
+
+	if true {
+		fmt.Println("###### func: ServeHTTP #########")
+		fmt.Printf("loc: %#v\n", loc)
+		fmt.Printf("req: %#v\n", req)
+		fmt.Printf("method: %#v\n", method)
+		fmt.Printf("HasSuffix: loc.Path: %#v\n", strings.HasSuffix(loc.Path, "/"))
+		fmt.Printf("loc.Path: %#v\n", loc.Path)
+		fmt.Printf("loc.Path (len) : %#v\n", len(loc.Path))
+		fmt.Printf("HasSuffix: req.URL.Path: %#v\n", strings.HasSuffix(req.URL.Path, "/"))
+		fmt.Printf("req.URL.Path: %#v\n", req.URL.Path)
+	}
 
 	// If original request URL ended in '/', append a '/' at the end of the
 	// of the proxy URL
+	// if !strings.HasSuffix(loc.Path, "/") && strings.HasSuffix(req.URL.Path, "/") {
 	if !strings.HasSuffix(loc.Path, "/") && strings.HasSuffix(req.URL.Path, "/") {
+		fmt.Println("adding a slash to loc.Path")
 		loc.Path += "/"
+	}
+
+	if true {
+		fmt.Println("------------------")
+		fmt.Printf("loc: %#v\n", loc)
+		fmt.Printf("loc.Path (len) : %#v\n", len(loc.Path))
+		fmt.Printf("req: %#v\n", req)
+		fmt.Printf("method: %#v\n", method)
 	}
 
 	// From pkg/genericapiserver/endpoints/handlers/proxy.go#ServeHTTP:
@@ -208,6 +231,13 @@ func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	// This is essentially a hack for http://issue.k8s.io/4958.
 	// Note: Keep this code after tryUpgrade to not break that flow.
 	if len(loc.Path) == 0 {
+		if true {
+			fmt.Println("**************************************")
+			fmt.Printf("loc: %#v\n", loc)
+			fmt.Printf("req: %#v\n", req)
+			fmt.Printf("method: %#v\n", method)
+			fmt.Printf("http.MethodGet: %#v\n", http.MethodGet)
+		}
 		var queryPart string
 		if len(req.URL.RawQuery) > 0 {
 			queryPart = "?" + req.URL.RawQuery
