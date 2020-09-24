@@ -230,7 +230,7 @@ func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	// Redirect requests with an empty path to a location that ends with a '/'
 	// This is essentially a hack for http://issue.k8s.io/4958.
 	// Note: Keep this code after tryUpgrade to not break that flow.
-	if len(loc.Path) == 0 {
+	if ( len(loc.Path) == 0 &&  method == http.MethodGet ) {
 		if true {
 			fmt.Println("**************************************")
 			fmt.Printf("loc: %#v\n", loc)
