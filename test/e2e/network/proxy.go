@@ -37,6 +37,7 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2erc "k8s.io/kubernetes/test/e2e/framework/rc"
 	testutils "k8s.io/kubernetes/test/utils"
+	"k8s.io/client-go/transport"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	"github.com/onsi/ginkgo"
@@ -258,6 +259,39 @@ var _ = SIGDescribe("Proxy", func() {
 				framework.Failf(strings.Join(errs, "\n"))
 			}
 		})
+
+		ginkgo.It("A set of valid responses are returned for node ProxyWithPath", func() {
+
+			transportCfg, err := f.ClientConfig().TransportConfig()
+			framework.ExpectNoError(err, "Error creating transportCfg")
+			restTransport, err := transport.New(transportCfg)
+			framework.ExpectNoError(err, "Error creating restTransport")
+
+			client := &http.Client{
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+				Transport: restTransport,
+			}
+
+			httpVerbs := []string{"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
+			for _, httpVerb := range httpVerbs {
+
+				urlString := f.ClientConfig().Host + "/api/v1/nodes/heyste-humacs-control-plane-vmbww/proxy/configz"
+				framework.Logf("Starting http.Client for %s", urlString)
+				request, err := http.NewRequest(httpVerb, urlString, nil)
+				framework.ExpectNoError(err, "processing request")
+
+				resp, err := client.Do(request)
+				framework.ExpectNoError(err, "processing response")
+				defer resp.Body.Close()
+
+				framework.Logf("http.Client request:%s StatusCode:%d", httpVerb, resp.StatusCode)
+				framework.ExpectEqual(resp.StatusCode, 200, "The resp.StatusCode returned: %d", resp.StatusCode)
+			}
+
+		})
+
 	})
 })
 
