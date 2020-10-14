@@ -262,6 +262,13 @@ var _ = SIGDescribe("Proxy", func() {
 
 		ginkgo.It("A set of valid responses are returned for node ProxyWithPath", func() {
 
+			time.Sleep(1 * time.Second)
+			list, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+			framework.ExpectNoError(err, "Error listing nodes")
+			firstNodeName := list.Items[0].GetName()
+			framework.Logf("Checking proxy connection for node: %s", firstNodeName)
+			// framework.Logf("Checking proxy connection for node: %#v", list.Items[0])
+
 			transportCfg, err := f.ClientConfig().TransportConfig()
 			framework.ExpectNoError(err, "Error creating transportCfg")
 			restTransport, err := transport.New(transportCfg)
@@ -277,7 +284,8 @@ var _ = SIGDescribe("Proxy", func() {
 			httpVerbs := []string{"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
 			for _, httpVerb := range httpVerbs {
 
-				urlString := f.ClientConfig().Host + "/api/v1/nodes/heyste-humacs-control-plane-vmbww/proxy/configz"
+				// urlString := f.ClientConfig().Host + "/api/v1/node/heyste-humacs-control-plane-846qj/proxy/configz"
+				urlString := f.ClientConfig().Host + "/api/v1/node/" + firstNodeName + "/proxy/configz"
 				framework.Logf("Starting http.Client for %s", urlString)
 				request, err := http.NewRequest(httpVerb, urlString, nil)
 				framework.ExpectNoError(err, "processing request")
