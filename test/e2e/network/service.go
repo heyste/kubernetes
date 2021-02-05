@@ -2962,6 +2962,9 @@ var _ = SIGDescribe("Services", func() {
 		testSvcLabels := map[string]string{"test-service-static": "true"}
 		testSvcLabelsFlat := "test-service-static=true"
 
+		framework.Logf("svcResource: %#v", svcResource)
+
+
 		w := &cache.ListWatch{
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				options.LabelSelector = testSvcLabelsFlat
@@ -3012,25 +3015,61 @@ var _ = SIGDescribe("Services", func() {
 		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
 		framework.Logf("Service %s created", testSvcName)
 
+		ginkgo.By("getting /status")
+   	    // csrResource := certificatesv1.SchemeGroupVersion.WithResource("certificatesigningrequests")
+		// gottenStatus, err := f.DynamicClient.Resource(csrResource).Get(context.TODO(), createdCSR.Name, metav1.GetOptions{}, "status")
+		// framework.ExpectNoError(err)
+
+
+
+
+		// svcResource := schema.GroupVersionResource{Group: "", Version: "corev1", Resource: "services"}
+		// svcResource = v1.SchemeGroupVersion.WithResource("services")
+		// gottenStatus := f.DynamicClient.Resource(svcResource) // .Get(context.TODO(), testSvcName, metav1.GetOptions{}, "status")
+		//		framework.ExpectNoError(err)
+		framework.Logf("gvr: %v", svcResource)
+		// framework.Logf("Service Status: %v", gottenStatus)
+
 		ginkgo.By("patching the ServiceStatus")
+		// serviceStatusPatch, err := json.Marshal(map[string]interface{}{
+		// 	"metadata": map[string]interface{}{
+		// 		"labels": map[string]string{"test-service": "patched"},
+		// 	},
+		// 	"spec": map[string]interface{}{
+		// 		"ports": []map[string]interface{}{{
+		// 			"name":       "http8080",
+		// 			"port":       int32(8080),
+		// 			"targetPort": int(8080),
+		// 			"selector": []map[string]interface{}{{
+		// 				"type": "LoadBalancer",
+		// 			}},
+		// 		}},
+		// 	},
+		// })
+
 		serviceStatusPatch, err := json.Marshal(map[string]interface{}{
 			"metadata": map[string]interface{}{
 				"labels": map[string]string{"test-service": "patched"},
 			},
-			"spec": map[string]interface{}{
-				"ports": []map[string]interface{}{{
-					"name":       "http8080",
-					"port":       int32(8080),
-					"targetPort": int(8080),
-					"selector": []map[string]interface{}{{
-						"type": "LoadBalancer",
-					}},
+			"status": map[string]interface{}{
+				"conditions": []map[string]interface{}{{
+					"Type":    "StatusUpdate",
+					"Status":  v1.ConditionTrue,
+					"Reason":  "E2E",
+					"Message": "Set from an e2e test",
 				}},
 			},
 		})
+		framework.Logf("serviceStatusPatch: %#v", string(serviceStatusPatch))
 		framework.ExpectNoError(err, "Could not marshal json", err)
-		_, err = dc.Resource(svcResource).Namespace(ns).Patch(context.TODO(), testSvcName, types.StrategicMergePatchType, []byte(serviceStatusPatch), metav1.PatchOptions{}, "status")
+		patchedService, err := dc.Resource(svcResource).Namespace(ns).Patch(context.TODO(), testSvcName, types.StrategicMergePatchType, []byte(serviceStatusPatch), metav1.PatchOptions{}, "status")
 		framework.ExpectNoError(err, "Could not patch service status", err)
+		framework.Logf("patchedService: %#v", patchedService)
+
+		// framework.Logf("Conditions??? %#v", patchedService.Status.Conditions)
+		// ps := patchedService.DeepCopy()
+		// framework.Logf("Conditions??? %#v"
+
 
 		ginkgo.By("watching for the Service to be patched")
 		ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
@@ -3052,6 +3091,16 @@ var _ = SIGDescribe("Services", func() {
 		})
 		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
 		framework.Logf("Service %s patched", testSvcName)
+
+		// ===================================
+
+		//	statusToUpdate := patchedService.DeepCopy()
+
+
+
+		svcList, err = cs.CoreV1().Services("").List(context.TODO(), metav1.ListOptions{LabelSelector: "test-service=patched"})
+		framework.ExpectNoError(err, "failed to list Services")
+		framework.Logf("svclist: %#v", svcList)
 
 		svcStatus, err := dc.Resource(svcResource).Namespace(ns).Get(context.TODO(), testSvcName, metav1.GetOptions{}, "status")
 		framework.ExpectNoError(err, "Could not get service status", err)
