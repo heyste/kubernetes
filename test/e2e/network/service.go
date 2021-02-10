@@ -2957,13 +2957,11 @@ var _ = SIGDescribe("Services", func() {
 		cs := f.ClientSet
 		ns := f.Namespace.Name
 		svcResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}
-		svcClient := f.DynamicClient.Resource(svcResource).Namespace(ns)
+		svcClient := f.ClientSet.CoreV1().Services(ns)
 
 		testSvcName := "test-service-" + utilrand.String(5)
 		testSvcLabels := map[string]string{"test-service-static": "true"}
 		testSvcLabelsFlat := "test-service-static=true"
-
-		framework.Logf("svcResource: %#v", svcResource)
 
 		w := &cache.ListWatch{
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
@@ -2973,7 +2971,7 @@ var _ = SIGDescribe("Services", func() {
 		}
 
 		svcList, err := cs.CoreV1().Services("").List(context.TODO(), metav1.ListOptions{LabelSelector: testSvcLabelsFlat})
-		framework.ExpectNoError(err, "failed to list Pods")
+		framework.ExpectNoError(err, "failed to list Services")
 
 		ginkgo.By("creating a Service")
 		testService := v1.Service{
@@ -3012,34 +3010,29 @@ var _ = SIGDescribe("Services", func() {
 			framework.Logf("Observed event: %+v", event.Object)
 			return false, nil
 		})
-		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
+		framework.ExpectNoError(err, "Failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
 		framework.Logf("Service %s created", testSvcName)
 
-		ginkgo.By("getting /status")
-		svcStatusUnstructured, err := svcClient.Get(context.TODO(), testSvcName, metav1.GetOptions{}, "status")
-		framework.ExpectNoError(err)
-		framework.Logf(">>>> Service Status: %v", svcStatusUnstructured)
+		ginkgo.By("Getting /status")
+		svcStatusUnstructured, err := f.DynamicClient.Resource(svcResource).Namespace(ns).Get(context.TODO(), testSvcName, metav1.GetOptions{}, "status")
+		framework.ExpectNoError(err, "Failed to fetch ServiceStatus of Service %s in namespace %s", testSvcName, ns)
+		svcStatusBytes, err := json.Marshal(svcStatusUnstructured)
+		framework.ExpectNoError(err, "Failed to marshal unstructured response. %v", err)
+		var svcStatus v1.Service
+		err = json.Unmarshal(svcStatusBytes, &svcStatus)
+		framework.ExpectNoError(err, "Failed to unmarshal JSON bytes to a Service object type")
+		framework.Logf("Service %s has LoadBalancer: %v", testSvcName, svcStatus.Status.LoadBalancer)
 
 		ginkgo.By("patching the ServiceStatus")
-
-		serviceStatusPatch, err := json.Marshal(map[string]interface{}{
-			"metadata": map[string]interface{}{
-				"labels": map[string]string{"test-service": "patched"},
-			},
-			"status": map[string]interface{}{
-				"conditions": []map[string]interface{}{{
-					"Type":    "StatusUpdate",
-					"Status":  v1.ConditionTrue,
-					"Reason":  "E2E",
-					"Message": "Set from an e2e test",
-				}},
-			},
-		})
-		framework.Logf("serviceStatusPatch: %#v", string(serviceStatusPatch))
-		framework.ExpectNoError(err, "Could not marshal json", err)
-		patchedService, err := svcClient.Patch(context.TODO(),testSvcName, types.StrategicMergePatchType, []byte(serviceStatusPatch), metav1.PatchOptions{}, "status")
+		lbStatus := v1.LoadBalancerStatus{
+			Ingress: []v1.LoadBalancerIngress{{IP: "203.0.113.1"}},
+		}
+		lbStatusJSON, err := json.Marshal(lbStatus)
+		framework.ExpectNoError(err, "Failed to marshal JSON. %v", err)
+		_, err = svcClient.Patch(context.TODO(), testSvcName, types.MergePatchType,
+			[]byte(`{"metadata":{"annotations":{"patchedstatus":"true"}},"status":{"loadBalancer":`+string(lbStatusJSON)+`}}`),
+			metav1.PatchOptions{}, "status")
 		framework.ExpectNoError(err, "Could not patch service status", err)
-		framework.Logf("patchedService: %#v", patchedService)
 
 		ginkgo.By("watching for the Service to be patched")
 		ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
@@ -3048,12 +3041,12 @@ var _ = SIGDescribe("Services", func() {
 			if svc, ok := event.Object.(*v1.Service); ok {
 				found := svc.ObjectMeta.Name == testService.ObjectMeta.Name &&
 					svc.ObjectMeta.Namespace == ns &&
-					svc.Labels["test-service"] == "patched"
+					svc.Annotations["patchedstatus"] == "true"
 				if !found {
-					framework.Logf("observed Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
+					framework.Logf("observed Service %v in namespace %v with annotations: %v & LoadBalancer: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Annotations, svc.Status.LoadBalancer)
 					return false, nil
 				}
-				framework.Logf("Found Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
+				framework.Logf("Found Service %v in namespace %v with annotations: %v & LoadBalancer: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Annotations, svc.Status.LoadBalancer)
 				return found, nil
 			}
 			framework.Logf("Observed event: %+v", event.Object)
@@ -3062,51 +3055,35 @@ var _ = SIGDescribe("Services", func() {
 		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
 		framework.Logf("Service %s patched", testSvcName)
 
-		svcList, err = cs.CoreV1().Services("").List(context.TODO(), metav1.ListOptions{LabelSelector: "test-service=patched"})
-		framework.ExpectNoError(err, "failed to list Services")
-		framework.Logf("svclist: %#v", svcList)
-
-		svcStatus, err := svcClient.Get(context.TODO(), testSvcName, metav1.GetOptions{}, "status")
-		framework.ExpectNoError(err, "Could not get service status", err)
-
-		var svcStatusGet v1.Service
-		svcStatusUjson, err := json.Marshal(svcStatus)
-		framework.ExpectNoError(err, "Failed to marshal json of service label patch", err)
-
-		json.Unmarshal(svcStatusUjson, &svcStatusGet)
-		if !(svcStatusGet.ObjectMeta.Labels["test-service"] == "patched") {
-			framework.Logf("failed to patch the Service")
-		}
-
 		ginkgo.By("updating the ServiceStatus")
-		svcStatusGet.Spec.Ports[0].Name = "http8081"
-		svcStatusGet.Spec.Ports[0].Port = int32(8081)
-		svcStatusGet.ObjectMeta.Labels["test-service"] = "updated"
-		_, err = cs.CoreV1().Services(ns).Update(context.TODO(), &svcStatusGet, metav1.UpdateOptions{})
-		framework.ExpectNoError(err, "Unable to update service. %v", err)
+		// svcStatusGet.Spec.Ports[0].Name = "http8081"
+		// svcStatusGet.Spec.Ports[0].Port = int32(8081)
+		// svcStatusGet.ObjectMeta.Labels["test-service"] = "updated"
+		// _, err = cs.CoreV1().Services(ns).Update(context.TODO(), &svcStatusGet, metav1.UpdateOptions{})
+		// framework.ExpectNoError(err, "Unable to update service. %v", err)
 
-		ginkgo.By("watching for the Service to be updated")
-		ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
-		defer cancel()
-		_, err = watchtools.Until(ctx, svcList.ResourceVersion, w, func(event watch.Event) (bool, error) {
-			if svc, ok := event.Object.(*v1.Service); ok {
-				found := svc.ObjectMeta.Name == testService.ObjectMeta.Name &&
-					svc.ObjectMeta.Namespace == ns &&
-					svc.Spec.Ports[0].Name == "http8081" &&
-					svc.Spec.Ports[0].Port == int32(8081) &&
-					svc.Labels["test-service"] == "updated"
-				if !found {
-					framework.Logf("observed Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
-					return false, nil
-				}
-				framework.Logf("Found Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
-				return found, nil
-			}
-			framework.Logf("Observed event: %+v", event.Object)
-			return false, nil
-		})
-		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
-		framework.Logf("Service %s updated", testSvcName)
+		// ginkgo.By("watching for the Service to be updated")
+		// ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
+		// defer cancel()
+		// _, err = watchtools.Until(ctx, svcList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+		// 	if svc, ok := event.Object.(*v1.Service); ok {
+		// 		found := svc.ObjectMeta.Name == testService.ObjectMeta.Name &&
+		// 			svc.ObjectMeta.Namespace == ns &&
+		// 			svc.Spec.Ports[0].Name == "http8081" &&
+		// 			svc.Spec.Ports[0].Port == int32(8081) &&
+		// 			svc.Labels["test-service"] == "updated"
+		// 		if !found {
+		// 			framework.Logf("observed Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
+		// 			return false, nil
+		// 		}
+		// 		framework.Logf("Found Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
+		// 		return found, nil
+		// 	}
+		// 	framework.Logf("Observed event: %+v", event.Object)
+		// 	return false, nil
+		// })
+		// framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
+		// framework.Logf("Service %s updated", testSvcName)
 
 		ginkgo.By("deleting the service")
 		err = cs.CoreV1().Services(ns).Delete(context.TODO(), testSvcName, metav1.DeleteOptions{})
@@ -3123,10 +3100,10 @@ var _ = SIGDescribe("Services", func() {
 						svc.ObjectMeta.Namespace == ns &&
 						svc.Labels["test-service-static"] == "true"
 					if !found {
-						framework.Logf("observed Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
+						framework.Logf("observed Service %v in namespace %v with labels: %v & annotations: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Annotations)
 						return false, nil
 					}
-					framework.Logf("Found Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
+					framework.Logf("Found Service %v in namespace %v with labels: %v & annotations: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Annotations)
 					return found, nil
 				}
 			default:
