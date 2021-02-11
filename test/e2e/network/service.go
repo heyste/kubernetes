@@ -31,6 +31,7 @@ import (
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	// "k8s.io/component-helpers/scheduling/corev1"
 
 	compute "google.golang.org/api/compute/v1"
 
@@ -50,6 +51,8 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	watchtools "k8s.io/client-go/tools/watch"
 	cloudprovider "k8s.io/cloud-provider"
+	// "k8s.io/kubernetes/pkg/controller/certificates"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2eendpoints "k8s.io/kubernetes/test/e2e/framework/endpoints"
@@ -111,6 +114,26 @@ var (
 		},
 	}
 )
+
+type ServicesStatusCondition struct {
+	// Status of the condition, one of True, False, Unknown.
+	// Approved, Denied, and Failed conditions may not be "False" or "Unknown".
+	// If unset, should be treated as "True".
+	// +optional
+	Status api.ConditionStatus
+	// brief reason for the request state
+	// +optional
+	Reason string
+	// human readable message with details about the request state
+	// +optional
+	Message string
+	// timestamp for the last update to this condition
+	// +optional
+	LastUpdateTime metav1.Time
+	// lastTransitionTime is the time the condition last transitioned from one status to another.
+	// +optional
+	LastTransitionTime metav1.Time
+}
 
 // portsByPodName is a map that maps pod name to container ports.
 type portsByPodName map[string][]int
@@ -3029,7 +3052,7 @@ var _ = SIGDescribe("Services", func() {
 		}
 		lbStatusJSON, err := json.Marshal(lbStatus)
 		framework.ExpectNoError(err, "Failed to marshal JSON. %v", err)
-		_, err = svcClient.Patch(context.TODO(), testSvcName, types.MergePatchType,
+		patchedStatus, err := svcClient.Patch(context.TODO(), testSvcName, types.MergePatchType,
 			[]byte(`{"metadata":{"annotations":{"patchedstatus":"true"}},"status":{"loadBalancer":`+string(lbStatusJSON)+`}}`),
 			metav1.PatchOptions{}, "status")
 		framework.ExpectNoError(err, "Could not patch service status", err)
@@ -3056,13 +3079,37 @@ var _ = SIGDescribe("Services", func() {
 		framework.Logf("Service %s patched", testSvcName)
 
 		ginkgo.By("updating the ServiceStatus")
-		// svcStatusGet.Spec.Ports[0].Name = "http8081"
-		// svcStatusGet.Spec.Ports[0].Port = int32(8081)
-		// svcStatusGet.ObjectMeta.Labels["test-service"] = "updated"
-		// _, err = cs.CoreV1().Services(ns).Update(context.TODO(), &svcStatusGet, metav1.UpdateOptions{})
-		// framework.ExpectNoError(err, "Unable to update service. %v", err)
+		statusToUpdate := patchedStatus.DeepCopy()
 
-		// ginkgo.By("watching for the Service to be updated")
+		framework.Logf("statusToUpdate  (T): %T", statusToUpdate.Status.Conditions)
+		framework.Logf("statusToUpdate (#v): %#v", statusToUpdate.Status.Conditions)
+
+		// statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, ServicesStatusCondition{
+		// 	// 			Status:  v1.ConditionTrue,
+		// 	Reason:  "E2E",
+		// 	Message: "Set from an e2e test",
+		// })
+
+		// # k8s.io/kubernetes/test/e2e/network
+		// test/e2e/network/service.go:3086:44:
+		//   cannot use ServicesStatusCondition literal (type ServicesStatusCondition) as type "k8s.io/apimachinery/pkg/apis/meta/v1".Condition in append
+
+		// 		statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
+		// 			Type:    "StatusUpdate",
+		// 			Status:  v1.ConditionTrue,
+		// 			Reason:  "E2E",
+		// 			Message: "Set from an e2e test",
+		// 		})
+
+		// 	struct {
+		// 	"Type":    "StatusUpdate",
+		// 	"Status":  v1.ConditionTrue,
+		// 	"Reason":  "E2E",
+		// 		"Message": "Set from an e2e test",
+		// 	}
+		// )
+
+		ginkgo.By("watching for the Service to be updated")
 		// ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
 		// defer cancel()
 		// _, err = watchtools.Until(ctx, svcList.ResourceVersion, w, func(event watch.Event) (bool, error) {
