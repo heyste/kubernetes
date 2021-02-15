@@ -3081,33 +3081,21 @@ var _ = SIGDescribe("Services", func() {
 		ginkgo.By("updating the ServiceStatus")
 		statusToUpdate := patchedStatus.DeepCopy()
 
-		framework.Logf("statusToUpdate  (T): %T", statusToUpdate.Status.Conditions)
-		framework.Logf("statusToUpdate (#v): %#v", statusToUpdate.Status.Conditions)
+		oneHourBefore := time.Now().Add(-1 * time.Hour)
+		updatedStatusConditions := metav1.Condition{
+			Type: "StatusUpdate",
+			Status: metav1.ConditionTrue,
+			LastTransitionTime: metav1.Time{Time: oneHourBefore},
+			Reason: "E2E",
+			Message: "Set from e2e test",
+		}
 
-		// statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, ServicesStatusCondition{
-		// 	// 			Status:  v1.ConditionTrue,
-		// 	Reason:  "E2E",
-		// 	Message: "Set from an e2e test",
-		// })
+		statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, updatedStatusConditions)
+		framework.Logf("statusToUpdate: (#v): %#v", statusToUpdate)
 
-		// # k8s.io/kubernetes/test/e2e/network
-		// test/e2e/network/service.go:3086:44:
-		//   cannot use ServicesStatusCondition literal (type ServicesStatusCondition) as type "k8s.io/apimachinery/pkg/apis/meta/v1".Condition in append
-
-		// 		statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
-		// 			Type:    "StatusUpdate",
-		// 			Status:  v1.ConditionTrue,
-		// 			Reason:  "E2E",
-		// 			Message: "Set from an e2e test",
-		// 		})
-
-		// 	struct {
-		// 	"Type":    "StatusUpdate",
-		// 	"Status":  v1.ConditionTrue,
-		// 	"Reason":  "E2E",
-		// 		"Message": "Set from an e2e test",
-		// 	}
-		// )
+		// updatedStatus, err := svcClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
+		// framework.ExpectNoError(err, "\n\n Failed to UpdateStatus. %v\n\n", err)
+		// framework.Logf("updatedStatus (#v): %#v", updatedStatus)
 
 		ginkgo.By("watching for the Service to be updated")
 		// ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
