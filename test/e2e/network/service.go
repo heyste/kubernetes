@@ -50,6 +50,7 @@ import (
 	watch "k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
 	watchtools "k8s.io/client-go/tools/watch"
+	"k8s.io/client-go/util/retry"
 	cloudprovider "k8s.io/cloud-provider"
 	// "k8s.io/kubernetes/pkg/controller/certificates"
 	api "k8s.io/kubernetes/pkg/apis/core"
@@ -3052,7 +3053,7 @@ var _ = SIGDescribe("Services", func() {
 		}
 		lbStatusJSON, err := json.Marshal(lbStatus)
 		framework.ExpectNoError(err, "Failed to marshal JSON. %v", err)
-		patchedStatus, err := svcClient.Patch(context.TODO(), testSvcName, types.MergePatchType,
+		_, err = svcClient.Patch(context.TODO(), testSvcName, types.MergePatchType,
 			[]byte(`{"metadata":{"annotations":{"patchedstatus":"true"}},"status":{"loadBalancer":`+string(lbStatusJSON)+`}}`),
 			metav1.PatchOptions{}, "status")
 		framework.ExpectNoError(err, "Could not patch service status", err)
@@ -3079,23 +3080,24 @@ var _ = SIGDescribe("Services", func() {
 		framework.Logf("Service %s patched", testSvcName)
 
 		ginkgo.By("updating the ServiceStatus")
-		statusToUpdate := patchedStatus.DeepCopy()
 
-		oneHourBefore := time.Now().Add(-1 * time.Hour)
-		updatedStatusConditions := metav1.Condition{
-			Type: "StatusUpdate",
-			Status: metav1.ConditionTrue,
-			LastTransitionTime: metav1.Time{Time: oneHourBefore},
-			Reason: "E2E",
-			Message: "Set from e2e test",
-		}
+		var statusToUpdate, updatedStatus *v1.Service
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			statusToUpdate, err = svcClient.Get(context.TODO(), testSvcName, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to retrieve service %s", testSvcName)
 
-		statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, updatedStatusConditions)
-		framework.Logf("statusToUpdate: (#v): %#v", statusToUpdate)
+			statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, metav1.Condition{
+				Type: "StatusUpdate",
+				Status: metav1.ConditionTrue,
+				Reason: "E2E",
+				Message: "Set from e2e test",
+			})
 
-		// updatedStatus, err := svcClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
-		// framework.ExpectNoError(err, "\n\n Failed to UpdateStatus. %v\n\n", err)
-		// framework.Logf("updatedStatus (#v): %#v", updatedStatus)
+			updatedStatus, err = svcClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err, "\n\n Failed to UpdateStatus. %v\n\n", err)
+		framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
 
 		ginkgo.By("watching for the Service to be updated")
 		// ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
