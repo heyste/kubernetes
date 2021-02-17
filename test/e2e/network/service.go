@@ -3108,16 +3108,17 @@ var _ = SIGDescribe("Services", func() {
 					svc.ObjectMeta.Namespace == ns &&
 					svc.Annotations["patchedstatus"] == "true"
 				if !found {
-					framework.Logf("observed Service %v in namespace %v with annotations: %v & Conditions: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Annotations, svc.Status.LoadBalancer)
+					framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Annotations, svc.Status.LoadBalancer)
 					return false, nil
 				}
 				for _, cond := range svc.Status.Conditions {
 					if cond.Type == "StatusUpdate" &&
-						cond.Reason == "E2E" {
+						cond.Reason == "E2E" &&
+						cond.Message == "Set from e2e test" {
 						framework.Logf("Found Service %v in namespace %v with annotations: %v & Conditions: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Annotations, svc.Status.Conditions)
 						return found, nil
 					}
-					framework.Logf("Found Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
+					framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Annotations, svc.Status.LoadBalancer)
 					return false, nil
 				}
 			}
