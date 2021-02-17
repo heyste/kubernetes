@@ -31,7 +31,6 @@ import (
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
-	// "k8s.io/component-helpers/scheduling/corev1"
 
 	compute "google.golang.org/api/compute/v1"
 
@@ -3077,7 +3076,7 @@ var _ = SIGDescribe("Services", func() {
 			return false, nil
 		})
 		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
-		framework.Logf("Service %s patched", testSvcName)
+		framework.Logf("Service %s has service status patched", testSvcName)
 
 		ginkgo.By("updating the ServiceStatus")
 
@@ -3126,7 +3125,40 @@ var _ = SIGDescribe("Services", func() {
 			return false, nil
 		})
 		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
-		framework.Logf("Service %s updated", testSvcName)
+		framework.Logf("Service %s has service status updated", testSvcName)
+
+		ginkgo.By("patching the service")
+		servicePatchPayload, err := json.Marshal(v1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					"test-service": "patched",
+				},
+			},
+		})
+
+		_, err = svcClient.Patch(context.TODO(), testSvcName, types.StrategicMergePatchType, []byte(servicePatchPayload), metav1.PatchOptions{})
+		framework.ExpectNoError(err, "failed to patch service. %v", err)
+
+		ginkgo.By("watching for the Service to be patched")
+		ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
+		defer cancel()
+		_, err = watchtools.Until(ctx, svcList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+			if svc, ok := event.Object.(*v1.Service); ok {
+				found := svc.ObjectMeta.Name == testService.ObjectMeta.Name &&
+					svc.ObjectMeta.Namespace == ns &&
+					svc.Labels["test-service"] == "patched"
+				if !found {
+					framework.Logf("observed Service %v in namespace %v with labels: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels)
+					return false, nil
+				}
+				framework.Logf("Found Service %v in namespace %v with labels: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels)
+				return found, nil
+			}
+			framework.Logf("Observed event: %+v", event.Object)
+			return false, nil
+		})
+		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
+		framework.Logf("Service %s patched", testSvcName)
 
 		ginkgo.By("deleting the service")
 		err = cs.CoreV1().Services(ns).Delete(context.TODO(), testSvcName, metav1.DeleteOptions{})
