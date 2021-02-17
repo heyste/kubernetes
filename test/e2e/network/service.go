@@ -3087,9 +3087,9 @@ var _ = SIGDescribe("Services", func() {
 			framework.ExpectNoError(err, "Unable to retrieve service %s", testSvcName)
 
 			statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, metav1.Condition{
-				Type: "StatusUpdate",
-				Status: metav1.ConditionTrue,
-				Reason: "E2E",
+				Type:    "StatusUpdate",
+				Status:  metav1.ConditionTrue,
+				Reason:  "E2E",
 				Message: "Set from e2e test",
 			})
 
@@ -3100,27 +3100,32 @@ var _ = SIGDescribe("Services", func() {
 		framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
 
 		ginkgo.By("watching for the Service to be updated")
-		// ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
-		// defer cancel()
-		// _, err = watchtools.Until(ctx, svcList.ResourceVersion, w, func(event watch.Event) (bool, error) {
-		// 	if svc, ok := event.Object.(*v1.Service); ok {
-		// 		found := svc.ObjectMeta.Name == testService.ObjectMeta.Name &&
-		// 			svc.ObjectMeta.Namespace == ns &&
-		// 			svc.Spec.Ports[0].Name == "http8081" &&
-		// 			svc.Spec.Ports[0].Port == int32(8081) &&
-		// 			svc.Labels["test-service"] == "updated"
-		// 		if !found {
-		// 			framework.Logf("observed Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
-		// 			return false, nil
-		// 		}
-		// 		framework.Logf("Found Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
-		// 		return found, nil
-		// 	}
-		// 	framework.Logf("Observed event: %+v", event.Object)
-		// 	return false, nil
-		// })
-		// framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
-		// framework.Logf("Service %s updated", testSvcName)
+		ctx, cancel = context.WithTimeout(context.Background(), svcReadyTimeout)
+		defer cancel()
+		_, err = watchtools.Until(ctx, svcList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+			if svc, ok := event.Object.(*v1.Service); ok {
+				found := svc.ObjectMeta.Name == testService.ObjectMeta.Name &&
+					svc.ObjectMeta.Namespace == ns &&
+					svc.Annotations["patchedstatus"] == "true"
+				if !found {
+					framework.Logf("observed Service %v in namespace %v with annotations: %v & Conditions: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Annotations, svc.Status.LoadBalancer)
+					return false, nil
+				}
+				for _, cond := range svc.Status.Conditions {
+					if cond.Type == "StatusUpdate" &&
+						cond.Reason == "E2E" {
+						framework.Logf("Found Service %v in namespace %v with annotations: %v & Conditions: %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Annotations, svc.Status.Conditions)
+						return found, nil
+					}
+					framework.Logf("Found Service %v in namespace %v with labels: %v & ports %v", svc.ObjectMeta.Name, svc.ObjectMeta.Namespace, svc.Labels, svc.Spec.Ports)
+					return false, nil
+				}
+			}
+			framework.Logf("Observed event: %+v", event.Object)
+			return false, nil
+		})
+		framework.ExpectNoError(err, "failed to locate Service %v in namespace %v", testService.ObjectMeta.Name, ns)
+		framework.Logf("Service %s updated", testSvcName)
 
 		ginkgo.By("deleting the service")
 		err = cs.CoreV1().Services(ns).Delete(context.TODO(), testSvcName, metav1.DeleteOptions{})
