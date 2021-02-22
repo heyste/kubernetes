@@ -175,7 +175,7 @@ var _ = SIGDescribe("Deployment", func() {
 		testDeploymentPatchImage := imageutils.GetE2EImage(imageutils.Pause)
 		testDeploymentUpdateImage := imageutils.GetE2EImage(imageutils.Httpd)
 		testDeploymentDefaultReplicas := int32(2)
-		testDeploymentMinimumReplicas := int32(1)
+		testDeploymentTargetReplicas := int32(3)
 		testDeploymentNoReplicas := int32(0)
 		testDeploymentLabels := map[string]string{"test-deployment-static": "true"}
 		testDeploymentLabelsFlat := "test-deployment-static=true"
@@ -245,13 +245,14 @@ var _ = SIGDescribe("Deployment", func() {
 					deployment.Status.ReadyReplicas == testDeploymentDefaultReplicas
 				if !found {
 					framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v and labels %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas, deployment.ObjectMeta.Labels)
+					return false, nil
 				}
-				framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v and labels %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas, deployment.ObjectMeta.Labels)
+				framework.Logf("Found Deployment %v in namespace %v with ReadyReplicas %v and labels %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas, deployment.ObjectMeta.Labels)
 				return found, nil
 			}
 			return false, nil
 		})
-		framework.ExpectNoError(err, "failed to see replicas of %v in namespace %v scale to requested amount of %v", testDeployment.Name, testNamespaceName, testDeploymentDefaultReplicas)
+		framework.ExpectNoError(err, "Failed to create Deployment %v in namespace %v with the requested %v replicas", testDeployment.Name, testNamespaceName, testDeploymentDefaultReplicas)
 
 		ginkgo.By("patching the Deployment")
 		deploymentPatch, err := json.Marshal(map[string]interface{}{
@@ -259,7 +260,7 @@ var _ = SIGDescribe("Deployment", func() {
 				"labels": map[string]string{"test-deployment": "patched"},
 			},
 			"spec": map[string]interface{}{
-				"replicas": testDeploymentMinimumReplicas,
+				"replicas": testDeploymentTargetReplicas,
 				"template": map[string]interface{}{
 					"spec": map[string]interface{}{
 						"TerminationGracePeriodSeconds": &zero,
@@ -282,10 +283,13 @@ var _ = SIGDescribe("Deployment", func() {
 			case watch.Modified:
 				if deployment, ok := event.Object.(*appsv1.Deployment); ok {
 					found := deployment.ObjectMeta.Name == testDeployment.Name &&
-						deployment.ObjectMeta.Labels["test-deployment-static"] == "true"
+						deployment.ObjectMeta.Labels["test-deployment"] == "patched" &&
+						deployment.Status.ReadyReplicas == testDeploymentDefaultReplicas
 					if !found {
-						framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+						framework.Logf("observed Deployment %v in namespace %v with Labels %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.ObjectMeta.Labels)
+						return false, nil
 					}
+					framework.Logf("Patched Deployment %v in namespace %v with Labels %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.ObjectMeta.Labels)
 					return found, nil
 				}
 			default:
@@ -302,17 +306,18 @@ var _ = SIGDescribe("Deployment", func() {
 			if deployment, ok := event.Object.(*appsv1.Deployment); ok {
 				found := deployment.ObjectMeta.Name == testDeployment.Name &&
 					deployment.ObjectMeta.Labels["test-deployment-static"] == "true" &&
-					deployment.Status.ReadyReplicas == testDeploymentMinimumReplicas &&
+					deployment.Status.ReadyReplicas == testDeploymentTargetReplicas &&
 					deployment.Spec.Template.Spec.Containers[0].Image == testDeploymentPatchImage
 				if !found {
 					framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+					return false, nil
 				}
-				framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+				framework.Logf("Found Deployment %v in namespace %v with %v ReadyReplicas", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
 				return found, nil
 			}
 			return false, nil
 		})
-		framework.ExpectNoError(err, "failed to see replicas of %v in namespace %v scale to requested amount of %v", testDeployment.Name, testNamespaceName, testDeploymentMinimumReplicas)
+		framework.ExpectNoError(err, "Failed to scale Deployment %v in namespace %v to %v Replicas", testDeployment.Name, testNamespaceName, testDeploymentTargetReplicas)
 
 		ginkgo.By("listing Deployments")
 		deploymentsList, err = f.ClientSet.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{LabelSelector: testDeploymentLabelsFlat})
@@ -323,13 +328,13 @@ var _ = SIGDescribe("Deployment", func() {
 				deploymentItem.ObjectMeta.Namespace == testNamespaceName &&
 				deploymentItem.ObjectMeta.Labels["test-deployment-static"] == "true" {
 				foundDeployment = true
-				framework.Logf("Found %v with labels: %v", deploymentItem.ObjectMeta.Name, deploymentItem.ObjectMeta.Labels)
+				framework.Logf("Found inside the list %v with labels: %v", deploymentItem.ObjectMeta.Name, deploymentItem.ObjectMeta.Labels)
 				break
 			}
 		}
-		framework.ExpectEqual(foundDeployment, true, "unable to find the Deployment in list", deploymentsList)
+		framework.ExpectEqual(foundDeployment, true, "unable to find the Deployment in list. %v", deploymentsList)
 
-		ginkgo.By("updating the Deployment")
+		ginkgo.By("updating the Deployment, scale down")
 		testDeploymentUpdate := testDeployment
 		testDeploymentUpdate.ObjectMeta.Labels["test-deployment"] = "updated"
 		testDeploymentUpdate.Spec.Template.Spec.Containers[0].Image = testDeploymentUpdateImage
@@ -350,11 +355,13 @@ var _ = SIGDescribe("Deployment", func() {
 			case watch.Modified:
 				if deployment, ok := event.Object.(*appsv1.Deployment); ok {
 					found := deployment.ObjectMeta.Name == testDeployment.Name &&
-						deployment.ObjectMeta.Labels["test-deployment-static"] == "true"
+						deployment.ObjectMeta.Labels["test-deployment"] == "updated" &&
+						deployment.Status.ReadyReplicas == testDeploymentDefaultReplicas
 					if !found {
 						framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+						return false, nil
 					}
-					framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+					framework.Logf("Found updated Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
 					return found, nil
 				}
 			default:
@@ -378,11 +385,13 @@ var _ = SIGDescribe("Deployment", func() {
 		_, err = watchtools.Until(ctx, deploymentsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
 			if deployment, ok := event.Object.(*appsv1.Deployment); ok {
 				found := deployment.ObjectMeta.Name == testDeployment.Name &&
-					deployment.ObjectMeta.Labels["test-deployment-static"] == "true" &&
-					deployment.Status.ReadyReplicas == testDeploymentDefaultReplicas
+					deployment.ObjectMeta.Labels["test-deployment"] == "updated" &&
+					deployment.Status.ReadyReplicas == testDeploymentDefaultReplicas //  <<< why are we scaling down
 				if !found {
 					framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v and labels %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas, deployment.ObjectMeta.Labels)
+					return false, nil
 				}
+				framework.Logf("Fetched Deployment Status for %v in namespace %v with ReadyReplicas %v and labels %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas, deployment.ObjectMeta.Labels)
 				return found, nil
 			}
 			return false, nil
@@ -403,13 +412,32 @@ var _ = SIGDescribe("Deployment", func() {
 		ctx, cancel = context.WithTimeout(context.Background(), dContextTimeout)
 		defer cancel()
 		_, err = watchtools.Until(ctx, deploymentsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+
+			// if deployment, ok := event.Object.(*appsv1.Deployment); ok {
+			// 	found := deployment.ObjectMeta.Name == testDeployment.Name &&
+			// 		deployment.ObjectMeta.Labels["test-deployment"] == "patched-status" // &&
+			// 	//					deployment.Status.ReadyReplicas == testDeploymentDefaultReplicas &&
+			// 	//	deployment.Spec.Template.Spec.Containers[0].Image == testDeploymentUpdateImage
+			// 	if !found {
+			// 		framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+			// 		return false, nil
+			// 	}
+			// 	framework.Logf("Patched Deployment Status %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+			// 	return found, nil
+			// }
+			// return false, nil
+
 			switch event.Type {
 			case watch.Modified:
 				if deployment, ok := event.Object.(*appsv1.Deployment); ok {
 					found := deployment.ObjectMeta.Name == testDeployment.Name &&
+						// deployment.ObjectMeta.Labels["test-deployment"] == "patched-status"
 						deployment.ObjectMeta.Labels["test-deployment-static"] == "true"
+					framework.Logf(">>> Found Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
 					return found, nil
 				}
+				// framework.Logf(">>> observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+				framework.Logf(">>> observed Deployment.... ") /// "%v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
 			default:
 				framework.Logf("observed event type %v", event.Type)
 			}
@@ -435,7 +463,9 @@ var _ = SIGDescribe("Deployment", func() {
 					deployment.Spec.Template.Spec.Containers[0].Image == testDeploymentUpdateImage
 				if !found {
 					framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
+					return false, nil
 				}
+				framework.Logf("Fetched Deployment Status %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
 				return found, nil
 			}
 			return false, nil
@@ -457,6 +487,7 @@ var _ = SIGDescribe("Deployment", func() {
 					if !found {
 						framework.Logf("observed Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
 					}
+					framework.Logf("Found Deployment %v in namespace %v with ReadyReplicas %v", deployment.ObjectMeta.Name, deployment.ObjectMeta.Namespace, deployment.Status.ReadyReplicas)
 					return found, nil
 				}
 			default:
