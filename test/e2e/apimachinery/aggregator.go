@@ -536,6 +536,47 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 	}
 	framework.ExpectEqual(locatedWardle, true, "Unable to find v1alpha1.wardle.example.com in APIServiceList")
 
+	ginkgo.By("Patch APIServices Status")
+	patch := apiregistrationv1.APIService{
+		Status: apiregistrationv1.APIServiceStatus{
+			Conditions: []apiregistrationv1.APIServiceCondition{
+				{
+					Type:   "StatusPatched",
+					Status: "True",
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(patch)
+	framework.ExpectNoError(err, "Failed to marshal JSON. %v", err)
+
+	_, err = restClient.Patch(types.MergePatchType).
+		AbsPath("/apis/apiregistration.k8s.io/v1/apiservices/v1alpha1.wardle.example.com/status").
+		SetHeader("Accept", "application/json").
+		Body([]byte(payload)).
+		DoRaw(context.TODO())
+	framework.ExpectNoError(err, "Patch failed for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
+
+	ginkgo.By("Confirm Apiservice Status Patched")
+	statusContent, err = restClient.Get().
+		AbsPath("/apis/apiregistration.k8s.io/v1/apiservices/v1alpha1.wardle.example.com/status").
+		SetHeader("Accept", "application/json").DoRaw(context.TODO())
+	framework.ExpectNoError(err, "No response for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
+
+	var jr2 *apiregistrationv1.APIService
+	err = json.Unmarshal([]byte(statusContent), &jr2)
+	framework.ExpectNoError(err, "Failed to process statusContent: %v | err: %v ", string(statusContent), err)
+	framework.Logf("Conditions: %v", jr2.Status.Conditions)
+
+	found := false
+	for _, cond := range jr2.Status.Conditions {
+		if cond.Type == "StatusPatched" {
+			framework.Logf("Found patched condition type: %v", cond.Type)
+			found = true
+		}
+	}
+	framework.ExpectEqual(found, true, "Did not find the patched condition type. %v", jr2.Status.Conditions)
+
 	// kubectl delete flunder test-flunder
 	err = dynamicClient.Delete(context.TODO(), flunderName, metav1.DeleteOptions{})
 	validateErrorWithDebugInfo(f, err, pods, "deleting flunders(%v) using dynamic client", unstructuredList.Items)
