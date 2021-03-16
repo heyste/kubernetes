@@ -141,6 +141,12 @@ var _ = SIGDescribe("ReplicaSet", func() {
 	framework.ConformanceIt("Replace and Patch tests", func() {
 		testRSLifeCycle(f)
 	})
+
+	ginkgo.It("List and DeleteCollection operations", func() {
+		listRSDeleteCollection(f)
+
+	})
+
 })
 
 // A basic test to check the deployment of an image using a ReplicaSet. The
@@ -494,4 +500,45 @@ func testRSLifeCycle(f *framework.Framework) {
 	framework.ExpectNoError(err, "Failed to get replicaset resource: %v", err)
 	framework.ExpectEqual(*(rs.Spec.Replicas), rsPatchReplicas, "replicaset should have 3 replicas")
 	framework.ExpectEqual(rs.Spec.Template.Spec.Containers[0].Image, rsPatchImage, "replicaset not using rsPatchImage. Is using %v", rs.Spec.Template.Spec.Containers[0].Image)
+}
+
+//List and DeleteCollection operations
+func listRSDeleteCollection(f *framework.Framework) {
+
+	ns := f.Namespace.Name
+	c := f.ClientSet
+	zero := int64(0)
+	rsName := "test-rs"
+	replicas := int32(3)
+
+	// Create webserver pods.
+	rsPodLabels := map[string]string{
+		"name": "sample-pod",
+		"pod":  WebserverImageName,
+	}
+
+	// Create a ReplicaSet
+	rs := newRS(rsName, replicas, rsPodLabels, WebserverImageName, WebserverImage, nil)
+	_, err := c.AppsV1().ReplicaSets(ns).Create(context.TODO(), rs, metav1.CreateOptions{})
+	framework.ExpectNoError(err)
+
+	// Verify that the required pods have come up.
+	err = e2epod.VerifyPodsRunning(c, ns, "sample-pod", false, replicas)
+	framework.ExpectNoError(err, "Failed to create pods: %s", err)
+
+	//Listing all ReplicaSeta
+	ginkgo.By("listing all ReplicaSets")
+	RSlist, err := f.ClientSet.AppsV1().ReplicaSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: "sample-pod"})
+	framework.ExpectNoError(err, "failed to list ReplicaSets")
+	framework.ExpectEqual(len(RSlist.Items), 0, "filtered list should have 3 items")
+	// Test pass when ^^ = 0 and fail when = 3
+
+	//Deleting the Replicas
+	ginkgo.By("deleting the ReplicaSets")
+	err = f.ClientSet.AppsV1().ReplicaSets(ns).DeleteCollection(context.TODO(), metav1.DeleteOptions{GracePeriodSeconds: &zero}, metav1.ListOptions{LabelSelector: "sample-pod"})
+	framework.ExpectNoError(err, "failed to delete ReplicaSets")
+
+	//Varify delete, Is the a good way?
+	RSlist, err = f.ClientSet.AppsV1().ReplicaSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: "sample-pod"})
+	framework.ExpectEqual(len(RSlist.Items) <= 3, true, "filtered list should have <= 3 items")
 }
