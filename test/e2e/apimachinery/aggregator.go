@@ -98,7 +98,7 @@ var _ = SIGDescribe("Aggregator", func() {
 	})
 
 	/*
-		    Release: v1.17, v1.21
+		    Release: v1.17, v1.21, v1.22
 		    Testname: aggregator-supports-the-sample-apiserver
 		    Description: Ensure that the sample-apiserver code from 1.17 and compiled against 1.17
 			will work on the current Aggregator/API-Server.
@@ -600,18 +600,17 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 			found := resource.ObjectMeta.Name == apiServiceName &&
 				resource.Labels["apiservice"] == "patched"
 			if !found {
-				framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
-				framework.Logf("Debug (resource): %v", resource)
+				framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, resource.Status.Conditions)
 				return false, nil
 			}
 			for _, cond := range resource.Status.Conditions {
 				if cond.Type == "StatusUpdate" &&
 					cond.Reason == "E2E" &&
 					cond.Message == "Set from e2e test" {
-					framework.Logf("Found Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+					framework.Logf("Found APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, resource.Status.Conditions)
 					return found, nil
 				} else {
-					framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+					framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, resource.Status.Conditions)
 				}
 			}
 			return false, nil
@@ -619,10 +618,10 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 		framework.Logf("Observed event: %+v", event.Object)
 		return false, nil
 	})
-	framework.ExpectNoError(err, "failed to locate API Service %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
+	framework.ExpectNoError(err, "failed to locate APIService %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
 	framework.Logf("APIService Status for %s has been updated", apiServiceName)
 
-	ginkgo.By("Patch APIServices Status")
+	ginkgo.By("Patch APIService Status")
 	patch := apiregistrationv1.APIService{
 		Status: apiregistrationv1.APIServiceStatus{
 			Conditions: []apiregistrationv1.APIServiceCondition{
@@ -651,16 +650,15 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 			found := resource.ObjectMeta.Name == apiServiceName &&
 				resource.Labels["apiservice"] == "patched"
 			if !found {
-				framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
-				framework.Logf("Debug (resource): %v", resource)
+				framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, resource.Status.Conditions)
 				return false, nil
 			}
 			for _, cond := range resource.Status.Conditions {
 				if cond.Type == "StatusPatched" {
-					framework.Logf("Found Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+					framework.Logf("Found APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, resource.Status.Conditions)
 					return found, nil
 				} else {
-					framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+					framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, resource.Status.Conditions)
 				}
 			}
 			return false, nil
@@ -668,7 +666,7 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 		framework.Logf("Observed event: %+v", event.Object)
 		return false, nil
 	})
-	framework.ExpectNoError(err, "failed to locate API Service %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
+	framework.ExpectNoError(err, "failed to locate APIService %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
 	framework.Logf("APIService Status for %s has been patched", apiServiceName)
 
 	// kubectl delete flunder test-flunder
