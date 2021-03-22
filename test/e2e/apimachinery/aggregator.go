@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/client-go/tools/cache"
+
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -37,8 +39,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
 	clientset "k8s.io/client-go/kubernetes"
+	watchtools "k8s.io/client-go/tools/watch"
+	"k8s.io/client-go/util/retry"
 	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
@@ -54,6 +59,8 @@ import (
 
 const (
 	aggregatorServicePort = 7443
+
+	apiServiceRetryTimeout = 2 * time.Minute
 )
 
 var _ = SIGDescribe("Aggregator", func() {
@@ -536,6 +543,85 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 	}
 	framework.ExpectEqual(locatedWardle, true, "Unable to find v1alpha1.wardle.example.com in APIServiceList")
 
+	// As the APIService doesn't have any labels currently set we need to
+	// set one so that a watch can track events based on the following label.
+	ginkgo.By("patch the APIService")
+	apiServiceName := "v1alpha1.wardle.example.com"
+	apiServiceClient := aggrclient.ApiregistrationV1().APIServices()
+	apiServicePatch, err := json.Marshal(map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"labels": map[string]string{"apiservice": "patched"},
+		},
+	})
+	framework.ExpectNoError(err, "failed to Marshal APIService JSON patch")
+	patchedResult, err := apiServiceClient.Patch(context.TODO(), apiServiceName, types.StrategicMergePatchType, []byte(apiServicePatch), metav1.PatchOptions{})
+	framework.ExpectNoError(err, "failed to patch APIService")
+	framework.Logf("APIService labels: %v", patchedResult.Labels)
+
+	patchedApiService, err := apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+	framework.ExpectNoError(err, "Unable to retrieve api service %s", apiServiceName)
+	framework.Logf("APIService labels: %v", patchedApiService.Labels)
+
+	w := &cache.ListWatch{
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			options.LabelSelector = "apiservice=patched"
+			return apiServiceClient.Watch(context.TODO(), options)
+		},
+	}
+
+	apiServiceList, err := apiServiceClient.List(context.TODO(), metav1.ListOptions{LabelSelector: "apiservice=patched"})
+	framework.ExpectNoError(err, "failed to list API Services")
+
+	ginkgo.By("updating the APIService Status")
+	var statusToUpdate, updatedStatus *apiregistrationv1.APIService
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		statusToUpdate, err = apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "Unable to retrieve api service %s", apiServiceName)
+
+		statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, apiregistrationv1.APIServiceCondition{
+			Type:    "StatusUpdate",
+			Status:  "True",
+			Reason:  "E2E",
+			Message: "Set from e2e test",
+		})
+
+		updatedStatus, err = apiServiceClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
+		return err
+	})
+	framework.ExpectNoError(err, "Failed to update status. %v", err)
+	framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
+
+	ginkgo.By("watching for the APIService to be updated")
+	ctx, cancel := context.WithTimeout(context.Background(), apiServiceRetryTimeout)
+	defer cancel()
+	_, err = watchtools.Until(ctx, apiServiceList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+		if resource, ok := event.Object.(*apiregistrationv1.APIService); ok {
+			found := resource.ObjectMeta.Name == apiServiceName &&
+				resource.Labels["apiservice"] == "patched"
+			if !found {
+				framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+				framework.Logf("Debug (resource): %v", resource)
+				return false, nil
+			}
+			for _, cond := range resource.Status.Conditions {
+				if cond.Type == "StatusUpdate" &&
+					cond.Reason == "E2E" &&
+					cond.Message == "Set from e2e test" {
+					framework.Logf("Found Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+					return found, nil
+				} else {
+					framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+				}
+			}
+			return false, nil
+		}
+		framework.Logf("Observed event: %+v", event.Object)
+		return false, nil
+	})
+	framework.ExpectNoError(err, "failed to locate API Service %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
+	framework.Logf("APIService Status for %s has been updated", apiServiceName)
+
 	ginkgo.By("Patch APIServices Status")
 	patch := apiregistrationv1.APIService{
 		Status: apiregistrationv1.APIServiceStatus{
@@ -557,25 +643,33 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 		DoRaw(context.TODO())
 	framework.ExpectNoError(err, "Patch failed for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
 
-	ginkgo.By("Confirm Apiservice Status Patched")
-	statusContent, err = restClient.Get().
-		AbsPath("/apis/apiregistration.k8s.io/v1/apiservices/v1alpha1.wardle.example.com/status").
-		SetHeader("Accept", "application/json").DoRaw(context.TODO())
-	framework.ExpectNoError(err, "No response for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
-
-	var jr2 *apiregistrationv1.APIService
-	err = json.Unmarshal([]byte(statusContent), &jr2)
-	framework.ExpectNoError(err, "Failed to process statusContent: %v | err: %v ", string(statusContent), err)
-	framework.Logf("Conditions: %v", jr2.Status.Conditions)
-
-	found := false
-	for _, cond := range jr2.Status.Conditions {
-		if cond.Type == "StatusPatched" {
-			framework.Logf("Found patched condition type: %v", cond.Type)
-			found = true
+	ginkgo.By("watching for the APIService to be patched")
+	ctx, cancel = context.WithTimeout(context.Background(), apiServiceRetryTimeout)
+	defer cancel()
+	_, err = watchtools.Until(ctx, apiServiceList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+		if resource, ok := event.Object.(*apiregistrationv1.APIService); ok {
+			found := resource.ObjectMeta.Name == apiServiceName &&
+				resource.Labels["apiservice"] == "patched"
+			if !found {
+				framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+				framework.Logf("Debug (resource): %v", resource)
+				return false, nil
+			}
+			for _, cond := range resource.Status.Conditions {
+				if cond.Type == "StatusPatched" {
+					framework.Logf("Found Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+					return found, nil
+				} else {
+					framework.Logf("Observed Service %v in namespace %v with annotations: %v & Conditions: %v", resource.ObjectMeta.Name, resource.ObjectMeta.Namespace, resource.Annotations, resource.Status.Conditions)
+				}
+			}
+			return false, nil
 		}
-	}
-	framework.ExpectEqual(found, true, "Did not find the patched condition type. %v", jr2.Status.Conditions)
+		framework.Logf("Observed event: %+v", event.Object)
+		return false, nil
+	})
+	framework.ExpectNoError(err, "failed to locate API Service %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
+	framework.Logf("APIService Status for %s has been patched", apiServiceName)
 
 	// kubectl delete flunder test-flunder
 	err = dynamicClient.Delete(context.TODO(), flunderName, metav1.DeleteOptions{})
