@@ -142,11 +142,9 @@ var _ = SIGDescribe("ReplicaSet", func() {
 		testRSLifeCycle(f)
 	})
 
-	ginkgo.It("List and DeleteCollection operations", func() {
+	ginkgo.It("should list and delete a collection of ReplicaSets", func() {
 		listRSDeleteCollection(f)
-
 	})
-
 })
 
 // A basic test to check the deployment of an image using a ReplicaSet. The
@@ -502,57 +500,44 @@ func testRSLifeCycle(f *framework.Framework) {
 	framework.ExpectEqual(rs.Spec.Template.Spec.Containers[0].Image, rsPatchImage, "replicaset not using rsPatchImage. Is using %v", rs.Spec.Template.Spec.Containers[0].Image)
 }
 
-//List and DeleteCollection operations
+// List and DeleteCollection operations
 func listRSDeleteCollection(f *framework.Framework) {
 
-	framework.Logf("time: %v", time.Now())
 	ns := f.Namespace.Name
-	framework.Logf("ns: %v", ns)
-	rsClient := f.ClientSet.AppsV1().ReplicaSets(ns)
 	c := f.ClientSet
+	rsClient := f.ClientSet.AppsV1().ReplicaSets(ns)
 	zero := int64(0)
 	rsName := "test-rs"
 	replicas := int32(3)
 
-	// Define rs Labels
+	// Define ReplicaSet Labels
 	rsPodLabels := map[string]string{
 		"name": "sample-pod",
 		"pod":  WebserverImageName,
 	}
 
-        ginkgo.By("Create a ReplicaSet")
-	framework.Logf("time: %v", time.Now())
+	ginkgo.By("Create a ReplicaSet")
 	rs := newRS(rsName, replicas, rsPodLabels, WebserverImageName, WebserverImage, nil)
 	_, err := rsClient.Create(context.TODO(), rs, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
 
+	ginkgo.By("Verify that the required pods have come up")
+	err = e2epod.VerifyPodsRunning(c, ns, "sample-pod", false, replicas)
+	framework.ExpectNoError(err, "Failed to create pods: %s", err)
+	r, err := rsClient.Get(context.TODO(), rsName, metav1.GetOptions{})
+	framework.ExpectNoError(err, "failed to get ReplicaSets")
+	framework.Logf("Replica Status: %+v", r.Status)
 
-	ginkgo.By("Waiting for ReplicaSets")
-	framework.Logf("time: %v", time.Now())
-	framework.Logf("rs: %v", rs)
-	time.Sleep(20*time.Second)
-	framework.Logf("rs: %v", rs)
-	//err = e2ereplicaset.WaitForReplicaSetTargetAvailableReplicas(c , rs, replicas)
-	//	framework.ExpectNoError(err)
-
-	// Verify that the required pods have come up.
-	//	err = e2epod.VerifyPodsRunning(c, ns, "sample-pod", false, replicas)
-	//	framework.ExpectNoError(err, "Failed to create pods: %s", err)
-
-	//Listing all ReplicaSets
-	ginkgo.By("listing all ReplicaSets")
-	framework.Logf("time: %v", time.Now())
+	ginkgo.By("Listing all ReplicaSets")
 	rsList, err := c.AppsV1().ReplicaSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: "name=sample-pod"})
 	framework.ExpectNoError(err, "failed to list ReplicaSets")
-	framework.Logf("rsList: %v", rsList)
-	//	framework.ExpectEqual(len(rsList.Items), replicas, "filtered list should have 3 items")
+	framework.ExpectEqual(len(rsList.Items), 1, "filtered list wasn't found")
 
-	//Deleting the Replicas
-	ginkgo.By("deleting the ReplicaSets")
+	ginkgo.By("DeleteCollection of the ReplicaSets")
 	err = rsClient.DeleteCollection(context.TODO(), metav1.DeleteOptions{GracePeriodSeconds: &zero}, metav1.ListOptions{LabelSelector: "name=sample-pod"})
 	framework.ExpectNoError(err, "failed to delete ReplicaSets")
 
-	//Varify delete, Is this a good way?
+	ginkgo.By("Verify that ReplicaSets have been deleted")
 	rsList, err = c.AppsV1().ReplicaSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: "name=sample-pod"})
 	framework.ExpectEqual(len(rsList.Items), 0, "filtered list should have no replica")
 }
