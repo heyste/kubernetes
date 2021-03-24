@@ -1183,4 +1183,4 @@ ginkgo.It("should list and delete a collection of DaemonSets", func() {
                ginkgo.By("Verify that ReplicaSets have been deleted")
 	       dsList, err = c.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: ""})
                framework.ExpectEqual(len(rsList.Items), 0, "filtered list should have no daemonset")
-}
+})
