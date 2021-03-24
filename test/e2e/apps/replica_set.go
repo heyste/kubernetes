@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/client-go/tools/cache"
+
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -31,8 +33,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
+	watch "k8s.io/apimachinery/pkg/watch"
 	"k8s.io/kubernetes/pkg/controller/replicaset"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -140,6 +144,10 @@ var _ = SIGDescribe("ReplicaSet", func() {
 	*/
 	framework.ConformanceIt("Replace and Patch tests", func() {
 		testRSLifeCycle(f)
+	})
+
+	ginkgo.It("should validate Replicaset Status endpoints", func() {
+		testReplicaSetStatus(f)
 	})
 })
 
@@ -494,4 +502,56 @@ func testRSLifeCycle(f *framework.Framework) {
 	framework.ExpectNoError(err, "Failed to get replicaset resource: %v", err)
 	framework.ExpectEqual(*(rs.Spec.Replicas), rsPatchReplicas, "replicaset should have 3 replicas")
 	framework.ExpectEqual(rs.Spec.Template.Spec.Containers[0].Image, rsPatchImage, "replicaset not using rsPatchImage. Is using %v", rs.Spec.Template.Spec.Containers[0].Image)
+}
+
+func testReplicaSetStatus(f *framework.Framework) {
+	ns := f.Namespace.Name
+	c := f.ClientSet
+	rsClient := c.AppsV1().ReplicaSets(ns)
+	// zero := int64(0)
+
+	// Define ReplicaSet Labels
+	rsPodLabels := map[string]string{
+		"name": "sample-pod",
+		"pod":  WebserverImageName,
+	}
+	labelSelector := labels.SelectorFromSet(rsPodLabels).String()
+	framework.Logf("labels: %v", labelSelector)
+
+	rsName := "test-rs"
+	replicas := int32(1)
+
+	w := &cache.ListWatch{
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			options.LabelSelector = labelSelector
+			return rsClient.Watch(context.TODO(), options)
+		},
+	}
+	framework.Logf("w: %v", w)
+
+	ginkgo.By("Create a ReplicaSet")
+	rs := newRS(rsName, replicas, rsPodLabels, WebserverImageName, WebserverImage, nil)
+	_, err := c.AppsV1().ReplicaSets(ns).Create(context.TODO(), rs, metav1.CreateOptions{})
+	framework.ExpectNoError(err)
+
+	ginkgo.By("Verify that the required pods have come up.")
+	err = e2epod.VerifyPodsRunning(c, ns, "sample-pod", false, replicas)
+	framework.ExpectNoError(err, "Failed to create pods: %s", err)
+
+	ginkgo.By("Explore status stuff...")
+	r, err := rsClient.Get(context.TODO(), rsName, metav1.GetOptions{})
+	framework.ExpectNoError(err, "Failed to get replicaset: %v", err)
+	framework.Logf("r: %#v", r.Status)
+
+	ginkgo.By("Getting /status")
+	rsResource := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}
+	rsStatusUnstructured, err := f.DynamicClient.Resource(rsResource).Namespace(ns).Get(context.TODO(), rsName, metav1.GetOptions{}, "status")
+	framework.ExpectNoError(err, "Failed to fetch the status of daemon set %s in namespace %s", rsName, ns)
+	rsStatusBytes, err := json.Marshal(rsStatusUnstructured)
+	framework.ExpectNoError(err, "Failed to marshal unstructured response. %v", err)
+
+	var rsStatus appsv1.DaemonSet
+	err = json.Unmarshal(rsStatusBytes, &rsStatus)
+	framework.ExpectNoError(err, "Failed to unmarshal JSON bytes to a daemon set object type")
+	framework.Logf("ReplicaSet %s has Conditions: %v", rsName, rsStatus.Status.Conditions)
 }
