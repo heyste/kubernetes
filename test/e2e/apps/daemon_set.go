@@ -1153,3 +1153,34 @@ func waitFailedDaemonPodDeleted(c clientset.Interface, pod *v1.Pod) func() (bool
 		return false, nil
 	}
 }
+
+ginkgo.It("should list and delete a collection of DaemonSets", func() {
+		label := map[string]string{daemonsetNameLabel: dsName}
+		labelSelector := labels.SelectorFromSet(label).String()
+
+		dsClient := f.ClientSet.AppsV1().DaemonSets(ns)
+		cs := f.ClientSet
+
+		ginkgo.By(fmt.Sprintf("Creating simple DaemonSet %q", dsName))
+		testDaemonset, err := c.AppsV1().DaemonSets(ns).Create(context.TODO(), newDaemonSetWithLabel(dsName, image, label), metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Check that daemon pods launch on every node of the cluster.")
+		err = wait.PollImmediate(dsRetryPeriod, dsRetryTimeout, checkRunningOnAllNodes(f, testDaemonset))
+		framework.ExpectNoError(err, "error waiting for daemon pod to start")
+		err = checkDaemonStatus(f, dsName)
+		framework.ExpectNoError(err)
+
+	       ginkgo.by("listing all DeamonSets")
+	       dsList, err := cs.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+	       framework.ExpectNoError(err, "failed to list Daemon Sets")
+	       framework.ExpectEqual(len(rsList.Items), 1, "filtered list wasn't found")
+
+	       ginkgo.By("DeleteCollection of the DaemonSets")
+	       err = dsClient.DeleteCollection(context.TODO(), metav1.DeleteOptions{GracePeriodSeconds: &zero}, metav1.ListOptions{LabelSelector: ""})
+	       framework.ExpectNoError(err, "failed to delete DaemonSets")
+
+               ginkgo.By("Verify that ReplicaSets have been deleted")
+	       dsList, err = c.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: ""})
+               framework.ExpectEqual(len(rsList.Items), 0, "filtered list should have no daemonset")
+}
