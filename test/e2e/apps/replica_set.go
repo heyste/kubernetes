@@ -37,6 +37,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	watch "k8s.io/apimachinery/pkg/watch"
+	watchtools "k8s.io/client-go/tools/watch"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/pkg/controller/replicaset"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -45,6 +47,10 @@ import (
 
 	"github.com/onsi/ginkgo"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+)
+
+const (
+	rsRetryTimeout = 2 * time.Minute
 )
 
 func newRS(rsName string, replicas int32, rsPodLabels map[string]string, imageName string, image string, args []string) *appsv1.ReplicaSet {
@@ -527,11 +533,12 @@ func testReplicaSetStatus(f *framework.Framework) {
 			return rsClient.Watch(context.TODO(), options)
 		},
 	}
-	framework.Logf("w: %v", w)
+	rsList, err := c.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+	framework.ExpectNoError(err, "failed to list Replica Sets")
 
 	ginkgo.By("Create a ReplicaSet")
 	rs := newRS(rsName, replicas, rsPodLabels, WebserverImageName, WebserverImage, nil)
-	_, err := c.AppsV1().ReplicaSets(ns).Create(context.TODO(), rs, metav1.CreateOptions{})
+	testReplicaSet, err := c.AppsV1().ReplicaSets(ns).Create(context.TODO(), rs, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
 
 	ginkgo.By("Verify that the required pods have come up.")
@@ -546,12 +553,64 @@ func testReplicaSetStatus(f *framework.Framework) {
 	ginkgo.By("Getting /status")
 	rsResource := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}
 	rsStatusUnstructured, err := f.DynamicClient.Resource(rsResource).Namespace(ns).Get(context.TODO(), rsName, metav1.GetOptions{}, "status")
-	framework.ExpectNoError(err, "Failed to fetch the status of daemon set %s in namespace %s", rsName, ns)
+	framework.ExpectNoError(err, "Failed to fetch the status of replica set %s in namespace %s", rsName, ns)
 	rsStatusBytes, err := json.Marshal(rsStatusUnstructured)
 	framework.ExpectNoError(err, "Failed to marshal unstructured response. %v", err)
 
-	var rsStatus appsv1.DaemonSet
+	var rsStatus appsv1.ReplicaSet
 	err = json.Unmarshal(rsStatusBytes, &rsStatus)
-	framework.ExpectNoError(err, "Failed to unmarshal JSON bytes to a daemon set object type")
+	framework.ExpectNoError(err, "Failed to unmarshal JSON bytes to a replica set object type")
 	framework.Logf("ReplicaSet %s has Conditions: %v", rsName, rsStatus.Status.Conditions)
+
+	ginkgo.By("updating the ReplicaSet Status")
+	var statusToUpdate, updatedStatus *appsv1.ReplicaSet
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		statusToUpdate, err = rsClient.Get(context.TODO(), rsName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "Unable to retrieve replicaset %s", rsName)
+
+		statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, appsv1.ReplicaSetCondition{
+			Type:    "StatusUpdate",
+			Status:  "True",
+			Reason:  "E2E",
+			Message: "Set from e2e test",
+		})
+
+		updatedStatus, err = rsClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
+		return err
+	})
+	framework.ExpectNoError(err, "Failed to update status. %v", err)
+	framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
+
+	ginkgo.By("watching for the daemon set status to be updated")
+	ctx, cancel := context.WithTimeout(context.Background(), rsRetryTimeout)
+	defer cancel()
+	_, err = watchtools.Until(ctx, rsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+		if rs, ok := event.Object.(*appsv1.ReplicaSet); ok {
+			found := rs.ObjectMeta.Name == testReplicaSet.ObjectMeta.Name &&
+				rs.ObjectMeta.Namespace == testReplicaSet.ObjectMeta.Namespace &&
+				rs.ObjectMeta.Labels["name"] == testReplicaSet.ObjectMeta.Labels["name"] &&
+				rs.ObjectMeta.Labels["pod"] == testReplicaSet.ObjectMeta.Labels["pod"]
+			if !found {
+				framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
+				return false, nil
+			}
+			for _, cond := range rs.Status.Conditions {
+				if cond.Type == "StatusUpdate" &&
+					cond.Reason == "E2E" &&
+					cond.Message == "Set from e2e test" {
+					framework.Logf("Found replica set %v in namespace %v with labels: %v annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.ObjectMeta.Labels, rs.Annotations, rs.Status.Conditions)
+					return found, nil
+				} else {
+					framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
+					return false, nil
+				}
+			}
+		}
+		framework.Logf("Observed event: %+v", event.Type)
+		return false, nil
+	})
+	framework.ExpectNoError(err, "failed to locate replica set %v in namespace %v", testReplicaSet.ObjectMeta.Name, ns)
+	framework.Logf("Replica set %s has an updated status", rsName)
+
 }
