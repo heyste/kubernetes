@@ -545,11 +545,6 @@ func testReplicaSetStatus(f *framework.Framework) {
 	err = e2epod.VerifyPodsRunning(c, ns, "sample-pod", false, replicas)
 	framework.ExpectNoError(err, "Failed to create pods: %s", err)
 
-	ginkgo.By("Explore status stuff...")
-	r, err := rsClient.Get(context.TODO(), rsName, metav1.GetOptions{})
-	framework.ExpectNoError(err, "Failed to get replicaset: %v", err)
-	framework.Logf("r: %#v", r.Status)
-
 	ginkgo.By("Getting /status")
 	rsResource := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}
 	rsStatusUnstructured, err := f.DynamicClient.Resource(rsResource).Namespace(ns).Get(context.TODO(), rsName, metav1.GetOptions{}, "status")
@@ -613,4 +608,20 @@ func testReplicaSetStatus(f *framework.Framework) {
 	framework.ExpectNoError(err, "failed to locate replica set %v in namespace %v", testReplicaSet.ObjectMeta.Name, ns)
 	framework.Logf("Replica set %s has an updated status", rsName)
 
+	ginkgo.By("patching the ReplicaSet Status")
+	replicaSetStatusPatch := appsv1.ReplicaSet{
+		Status: appsv1.ReplicaSetStatus{
+			Conditions: []appsv1.ReplicaSetCondition{
+				{
+					Type:   "StatusPatched",
+					Status: "True",
+				},
+			},
+		},
+	}
+
+	payload, err := json.Marshal(replicaSetStatusPatch)
+	framework.ExpectNoError(err, "Failed to marshal JSON. %v", err)
+	_, err = rsClient.Patch(context.TODO(), rsName, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
+	framework.ExpectNoError(err, "Failed to patch replica set status. %v", err)
 }
