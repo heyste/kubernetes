@@ -192,6 +192,9 @@ func NewUpgradeAwareHandler(location *url.URL, transport http.RoundTripper, wrap
 
 // ServeHTTP handles the proxy request
 func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	klog.Info("PLH: Tracking da stuff!!!")
+	klog.Infof("PLH Time: %v", time.Now())
+
 	if h.tryUpgrade(w, req) {
 		return
 	}
@@ -202,11 +205,19 @@ func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 	loc := *h.Location
 	loc.RawQuery = req.URL.RawQuery
+	method := req.Method
+
+	klog.Infof("PLH loc.Path: %#v", loc.Path)
+	klog.Infof("PLH req.URL.Path: %#v", req.URL.Path)
+	klog.Infof("PLH method: %v", method)
 
 	// If original request URL ended in '/', append a '/' at the end of the
 	// of the proxy URL
 	if !strings.HasSuffix(loc.Path, "/") && strings.HasSuffix(req.URL.Path, "/") {
+		klog.Infof("PLH (HasSuffix) loc.Path: %#v", loc.Path)
+		klog.Infof("PLH (HasSuffix) req.URL.Path: %#v", req.URL.Path)
 		loc.Path += "/"
+		klog.Infof("PLH (HasSuffix) (after +/) loc.Path: %#v", loc.Path)
 	}
 
 	// From pkg/genericapiserver/endpoints/handlers/proxy.go#ServeHTTP:
@@ -214,12 +225,15 @@ func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	// This is essentially a hack for http://issue.k8s.io/4958.
 	// Note: Keep this code after tryUpgrade to not break that flow.
 	if len(loc.Path) == 0 {
+		klog.Info("PLH loc.Path == 0")
+		klog.Infof("PLH method: %v", method)
 		var queryPart string
 		if len(req.URL.RawQuery) > 0 {
 			queryPart = "?" + req.URL.RawQuery
 		}
 		w.Header().Set("Location", req.URL.Path+"/"+queryPart)
 		w.WriteHeader(http.StatusMovedPermanently)
+		klog.Info("PLH return")
 		return
 	}
 
