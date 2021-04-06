@@ -556,6 +556,9 @@ func testReplicaSetStatus(f *framework.Framework) {
 	err = json.Unmarshal(rsStatusBytes, &rsStatus)
 	framework.ExpectNoError(err, "Failed to unmarshal JSON bytes to a replica set object type")
 	framework.Logf("ReplicaSet %s has Conditions: %v", rsName, rsStatus.Status.Conditions)
+	framework.Logf("ReplicaSet %s Status.Replicas: %v", rsName, rsStatus.Status.Replicas)
+	framework.Logf("ReplicaSet %s Status.ReadyReplicas: %v", rsName, rsStatus.Status.ReadyReplicas)
+	framework.Logf("ReplicaSet %s Status.AvailableReplicas: %v", rsName, rsStatus.Status.AvailableReplicas)
 
 	ginkgo.By("updating the ReplicaSet Status")
 	var statusToUpdate, updatedStatus *appsv1.ReplicaSet
@@ -607,6 +610,18 @@ func testReplicaSetStatus(f *framework.Framework) {
 	})
 	framework.ExpectNoError(err, "failed to locate replica set %v in namespace %v", testReplicaSet.ObjectMeta.Name, ns)
 	framework.Logf("Replica set %s has an updated status", rsName)
+
+	// due to patching failing, rechecking replica set state
+	ginkgo.By("get ReplicaSet state")
+
+	rs1, err := rsClient.Get(context.TODO(), rsName, metav1.GetOptions{})
+	framework.ExpectNoError(err, "Failed to get ReplicaSet. %v", err)
+
+	framework.Logf("rs1.Conditions: %#v", rs1.Status.Conditions)
+	framework.Logf("ReplicaSet %s Status.FullyLabeledReplicas: %v", rsName, rs1.Status.FullyLabeledReplicas)
+	framework.Logf("ReplicaSet %s Status.Replicas: %v", rsName, rs1.Status.Replicas)
+	framework.Logf("ReplicaSet %s Status.ReadyReplicas: %v", rsName, rs1.Status.ReadyReplicas)
+	framework.Logf("ReplicaSet %s Status.AvailableReplicas: %v", rsName, rs1.Status.AvailableReplicas)
 
 	ginkgo.By("patching the ReplicaSet Status")
 	replicaSetStatusPatch := appsv1.ReplicaSet{
