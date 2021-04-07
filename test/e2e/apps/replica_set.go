@@ -514,7 +514,6 @@ func testReplicaSetStatus(f *framework.Framework) {
 	ns := f.Namespace.Name
 	c := f.ClientSet
 	rsClient := c.AppsV1().ReplicaSets(ns)
-	// zero := int64(0)
 
 	// Define ReplicaSet Labels
 	rsPodLabels := map[string]string{
@@ -556,9 +555,6 @@ func testReplicaSetStatus(f *framework.Framework) {
 	err = json.Unmarshal(rsStatusBytes, &rsStatus)
 	framework.ExpectNoError(err, "Failed to unmarshal JSON bytes to a replica set object type")
 	framework.Logf("ReplicaSet %s has Conditions: %v", rsName, rsStatus.Status.Conditions)
-	framework.Logf("ReplicaSet %s Status.Replicas: %v", rsName, rsStatus.Status.Replicas)
-	framework.Logf("ReplicaSet %s Status.ReadyReplicas: %v", rsName, rsStatus.Status.ReadyReplicas)
-	framework.Logf("ReplicaSet %s Status.AvailableReplicas: %v", rsName, rsStatus.Status.AvailableReplicas)
 
 	ginkgo.By("updating the ReplicaSet Status")
 	var statusToUpdate, updatedStatus *appsv1.ReplicaSet
@@ -599,10 +595,9 @@ func testReplicaSetStatus(f *framework.Framework) {
 					cond.Message == "Set from e2e test" {
 					framework.Logf("Found replica set %v in namespace %v with labels: %v annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.ObjectMeta.Labels, rs.Annotations, rs.Status.Conditions)
 					return found, nil
-				} else {
-					framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
-					return false, nil
 				}
+				framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
+				return false, nil
 			}
 		}
 		framework.Logf("Observed event: %+v", event.Type)
@@ -610,18 +605,6 @@ func testReplicaSetStatus(f *framework.Framework) {
 	})
 	framework.ExpectNoError(err, "failed to locate replica set %v in namespace %v", testReplicaSet.ObjectMeta.Name, ns)
 	framework.Logf("Replica set %s has an updated status", rsName)
-
-	// due to patching failing, rechecking replica set state
-	ginkgo.By("get ReplicaSet state")
-
-	rs1, err := rsClient.Get(context.TODO(), rsName, metav1.GetOptions{})
-	framework.ExpectNoError(err, "Failed to get ReplicaSet. %v", err)
-
-	framework.Logf("rs1.Conditions: %#v", rs1.Status.Conditions)
-	framework.Logf("ReplicaSet %s Status.FullyLabeledReplicas: %v", rsName, rs1.Status.FullyLabeledReplicas)
-	framework.Logf("ReplicaSet %s Status.Replicas: %v", rsName, rs1.Status.Replicas)
-	framework.Logf("ReplicaSet %s Status.ReadyReplicas: %v", rsName, rs1.Status.ReadyReplicas)
-	framework.Logf("ReplicaSet %s Status.AvailableReplicas: %v", rsName, rs1.Status.AvailableReplicas)
 
 	ginkgo.By("patching the ReplicaSet Status")
 	replicaSetStatusPatch := appsv1.ReplicaSet{
@@ -634,9 +617,41 @@ func testReplicaSetStatus(f *framework.Framework) {
 			},
 		},
 	}
-
 	payload, err := json.Marshal(replicaSetStatusPatch)
-	framework.ExpectNoError(err, "Failed to marshal JSON. %v", err)
-	_, err = rsClient.Patch(context.TODO(), rsName, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
-	framework.ExpectNoError(err, "Failed to patch replica set status. %v", err)
+	framework.Logf("payload: %v", string(payload))
+
+	p2 := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
+	framework.Logf("p2: %v", string(p2))
+
+	patchedReplicaSet, err := rsClient.Patch(context.TODO(), rsName, types.MergePatchType, p2, metav1.PatchOptions{}, "status")
+	framework.Logf("err: %v", err)
+	framework.Logf("updatedStatus.Conditions: %#v", patchedReplicaSet.Status.Conditions)
+
+	ginkgo.By("watching for the daemon set status to be patched")
+	ctx, cancel = context.WithTimeout(context.Background(), rsRetryTimeout)
+	defer cancel()
+	_, err = watchtools.Until(ctx, rsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+		if rs, ok := event.Object.(*appsv1.ReplicaSet); ok {
+			found := rs.ObjectMeta.Name == testReplicaSet.ObjectMeta.Name &&
+				rs.ObjectMeta.Namespace == testReplicaSet.ObjectMeta.Namespace &&
+				rs.ObjectMeta.Labels["name"] == testReplicaSet.ObjectMeta.Labels["name"] &&
+				rs.ObjectMeta.Labels["pod"] == testReplicaSet.ObjectMeta.Labels["pod"]
+			if !found {
+				framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
+				return false, nil
+			}
+			for _, cond := range rs.Status.Conditions {
+				if cond.Type == "StatusPatched" {
+					framework.Logf("Found replica set %v in namespace %v with labels: %v annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.ObjectMeta.Labels, rs.Annotations, rs.Status.Conditions)
+					return found, nil
+				}
+				framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
+				return false, nil
+			}
+		}
+		framework.Logf("Observed event: %+v", event.Type)
+		return false, nil
+	})
+	framework.ExpectNoError(err, "failed to locate replica set %v in namespace %v", testReplicaSet.ObjectMeta.Name, ns)
+	framework.Logf("Replica set %s has an patched status", rsName)
 }
