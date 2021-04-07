@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/client-go/tools/cache"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -46,6 +47,7 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 
 	"github.com/onsi/ginkgo"
+	"k8s.io/klog/v2"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 )
 
@@ -595,9 +597,10 @@ func testReplicaSetStatus(f *framework.Framework) {
 					cond.Message == "Set from e2e test" {
 					framework.Logf("Found replica set %v in namespace %v with labels: %v annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.ObjectMeta.Labels, rs.Annotations, rs.Status.Conditions)
 					return found, nil
+				} else {
+					framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
+					return false, nil
 				}
-				framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
-				return false, nil
 			}
 		}
 		framework.Logf("Observed event: %+v", event.Type)
@@ -623,6 +626,12 @@ func testReplicaSetStatus(f *framework.Framework) {
 	p2 := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
 	framework.Logf("p2: %v", string(p2))
 
+	// test Merge function
+	updatedStatusJS, err := json.Marshal(updatedStatus)
+	payloadCondition, err := CreateMergePatch(updatedStatusJS, p2)
+	framework.Logf("Check 'CreateMergePatch error': %#v", err)
+	framework.Logf("Check 'CreateMergePatch': %#v", string(payloadCondition))
+
 	patchedReplicaSet, err := rsClient.Patch(context.TODO(), rsName, types.MergePatchType, p2, metav1.PatchOptions{}, "status")
 	framework.Logf("err: %v", err)
 	framework.Logf("updatedStatus.Conditions: %#v", patchedReplicaSet.Status.Conditions)
@@ -644,9 +653,10 @@ func testReplicaSetStatus(f *framework.Framework) {
 				if cond.Type == "StatusPatched" {
 					framework.Logf("Found replica set %v in namespace %v with labels: %v annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.ObjectMeta.Labels, rs.Annotations, rs.Status.Conditions)
 					return found, nil
+				} else {
+					framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
+					return false, nil
 				}
-				framework.Logf("Observed replica set %v in namespace %v with annotations: %v & Conditions: %v", rs.ObjectMeta.Name, rs.ObjectMeta.Namespace, rs.Annotations, rs.Status.Conditions)
-				return false, nil
 			}
 		}
 		framework.Logf("Observed event: %+v", event.Type)
@@ -654,4 +664,16 @@ func testReplicaSetStatus(f *framework.Framework) {
 	})
 	framework.ExpectNoError(err, "failed to locate replica set %v in namespace %v", testReplicaSet.ObjectMeta.Name, ns)
 	framework.Logf("Replica set %s has an patched status", rsName)
+}
+
+func CreateMergePatch(originalJS []byte, editedJS []byte) ([]byte, error) {
+	var err error
+
+	patchJS, err := jsonpatch.CreateMergePatch(originalJS, editedJS)
+	if err != nil {
+		klog.V(4).Infof("Can not merge: %v with %v. error: %v", originalJS, editedJS, err)
+		framework.Logf("Can not merge: %v with %v. error: %v", originalJS, editedJS, err)
+	}
+
+	return patchJS, err
 }
