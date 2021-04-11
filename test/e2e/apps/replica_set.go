@@ -153,7 +153,7 @@ var _ = SIGDescribe("ReplicaSet", func() {
 	})
 
 	ginkgo.It("should validate Replicaset Status endpoints", func() {
-		testReplicaSetStatus(f)
+		testRSStatus(f)
 	})
 })
 
@@ -510,7 +510,7 @@ func testRSLifeCycle(f *framework.Framework) {
 	framework.ExpectEqual(rs.Spec.Template.Spec.Containers[0].Image, rsPatchImage, "replicaset not using rsPatchImage. Is using %v", rs.Spec.Template.Spec.Containers[0].Image)
 }
 
-func testReplicaSetStatus(f *framework.Framework) {
+func testRSStatus(f *framework.Framework) {
 	ns := f.Namespace.Name
 	c := f.ClientSet
 	rsClient := c.AppsV1().ReplicaSets(ns)
@@ -607,25 +607,12 @@ func testReplicaSetStatus(f *framework.Framework) {
 	framework.Logf("Replica set %s has an updated status", rsName)
 
 	ginkgo.By("patching the ReplicaSet Status")
-	replicaSetStatusPatch := appsv1.ReplicaSet{
-		Status: appsv1.ReplicaSetStatus{
-			Conditions: []appsv1.ReplicaSetCondition{
-				{
-					Type:   "StatusPatched",
-					Status: "True",
-				},
-			},
-		},
-	}
-	payload, err := json.Marshal(replicaSetStatusPatch)
-	framework.Logf("payload: %v", string(payload))
+	payload := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
+	framework.Logf("Patch payload: %v", string(payload))
 
-	p2 := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
-	framework.Logf("p2: %v", string(p2))
-
-	patchedReplicaSet, err := rsClient.Patch(context.TODO(), rsName, types.MergePatchType, p2, metav1.PatchOptions{}, "status")
-	framework.Logf("err: %v", err)
-	framework.Logf("updatedStatus.Conditions: %#v", patchedReplicaSet.Status.Conditions)
+	patchedReplicaSet, err := rsClient.Patch(context.TODO(), rsName, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
+	framework.ExpectNoError(err, "Failed to patch status. %v", err)
+	framework.Logf("Patched status conditions: %#v", patchedReplicaSet.Status.Conditions)
 
 	ginkgo.By("watching for the daemon set status to be patched")
 	ctx, cancel = context.WithTimeout(context.Background(), rsRetryTimeout)
