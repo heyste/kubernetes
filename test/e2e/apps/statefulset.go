@@ -982,6 +982,42 @@ var _ = SIGDescribe("StatefulSet", func() {
 			})
 			framework.ExpectNoError(err, "failed to locate Statefulset %v in namespace %v", ss.ObjectMeta.Name, ns)
 			framework.Logf("Statefulset %s has an updated status", ssName)
+
+			ginkgo.By("patching the Statefulset Status")
+			payload = []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
+			framework.Logf("Patch payload: %v", string(payload))
+
+			patchedStatefulSet, err := ssClient.Patch(context.TODO(), ssName, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
+			framework.ExpectNoError(err, "Failed to patch status. %v", err)
+			framework.Logf("Patched status conditions: %#v", patchedStatefulSet.Status.Conditions)
+
+			ginkgo.By("watching for the Statefulset status to be patched")
+			ctx, cancel = context.WithTimeout(context.Background(), statefulSetTimeout)
+
+			_, err = watchtools.Until(ctx, ssList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+
+				defer cancel()
+				if e, ok := event.Object.(*appsv1.StatefulSet); ok {
+					found := e.ObjectMeta.Name == ss.ObjectMeta.Name &&
+						e.ObjectMeta.Namespace == ss.ObjectMeta.Namespace &&
+						e.ObjectMeta.Labels["e2e"] == ss.ObjectMeta.Labels["e2e"]
+					if !found {
+						framework.Logf("Observed Statefulset %v in namespace %v with annotations: %v & Conditions: %v", ss.ObjectMeta.Name, ss.ObjectMeta.Namespace, ss.Annotations, ss.Status.Conditions)
+						return false, nil
+					}
+					for _, cond := range e.Status.Conditions {
+						if cond.Type == "StatusPatched" {
+							framework.Logf("Found Statefulset %v in namespace %v with labels: %v annotations: %v & Conditions: %v", ss.ObjectMeta.Name, ss.ObjectMeta.Namespace, ss.ObjectMeta.Labels, ss.Annotations, cond)
+							return found, nil
+						} else {
+							framework.Logf("Observed Statefulset %v in namespace %v with annotations: %v & Conditions: %v", ss.ObjectMeta.Name, ss.ObjectMeta.Namespace, ss.Annotations, cond)
+							return false, nil
+						}
+					}
+				}
+				framework.Logf("Observed event: %+v", event.Type)
+				return false, nil
+			})
 		})
 	})
 
