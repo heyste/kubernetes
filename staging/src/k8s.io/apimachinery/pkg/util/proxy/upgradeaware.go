@@ -192,6 +192,9 @@ func NewUpgradeAwareHandler(location *url.URL, transport http.RoundTripper, wrap
 
 // ServeHTTP handles the proxy request
 func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+
+	klog.Info("PLH: Tracking request")
+
 	if h.tryUpgrade(w, req) {
 		return
 	}
@@ -202,6 +205,12 @@ func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 	loc := *h.Location
 	loc.RawQuery = req.URL.RawQuery
+	method := req.Method
+
+	klog.Infof("PLH: Method: %v", method)
+	klog.Infof("PLH: URL.RawQuery: %v", req.URL.RawQuery)
+	klog.Infof("PLH: loc.Path: %v", loc.Path)
+	klog.Infof("PLH: len(loc.Path): %v", len(loc.Path))
 
 	// If original request URL ended in '/', append a '/' at the end of the
 	// of the proxy URL
@@ -209,19 +218,26 @@ func (h *UpgradeAwareHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		loc.Path += "/"
 	}
 
+	klog.Infof("PLH: loc.Path: %v", loc.Path)
+	klog.Infof("PLH: len(loc.Path): %v", len(loc.Path))
+
 	// From pkg/genericapiserver/endpoints/handlers/proxy.go#ServeHTTP:
 	// Redirect requests with an empty path to a location that ends with a '/'
 	// This is essentially a hack for http://issue.k8s.io/4958.
 	// Note: Keep this code after tryUpgrade to not break that flow.
-	if len(loc.Path) == 0 {
+	if len(loc.Path) == 0 && (method == http.MethodGet || method == http.MethodHead) {
 		var queryPart string
 		if len(req.URL.RawQuery) > 0 {
 			queryPart = "?" + req.URL.RawQuery
 		}
+		klog.Infof("PLH: queryPart: %v", queryPart)
 		w.Header().Set("Location", req.URL.Path+"/"+queryPart)
 		w.WriteHeader(http.StatusMovedPermanently)
+		klog.Infof("PLH: w.Header: %#v", w.Header())
 		return
 	}
+
+	klog.Infof("PLH: w.Header: %#v", w.Header())
 
 	if h.Transport == nil || h.WrapTransport {
 		h.Transport = h.defaultProxyTransport(req.URL, h.Transport)
