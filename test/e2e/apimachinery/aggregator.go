@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/client-go/tools/cache"
+
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -37,8 +39,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
 	clientset "k8s.io/client-go/kubernetes"
+	watchtools "k8s.io/client-go/tools/watch"
+	"k8s.io/client-go/util/retry"
 	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
@@ -54,6 +59,8 @@ import (
 
 const (
 	aggregatorServicePort = 7443
+
+	apiServiceRetryTimeout = 2 * time.Minute
 )
 
 var _ = SIGDescribe("Aggregator", func() {
@@ -67,6 +74,7 @@ var _ = SIGDescribe("Aggregator", func() {
 	// of NewDefaultFramework.
 	ginkgo.AfterEach(func() {
 		cleanTest(c, aggrclient, ns)
+		cleanBetaTest(c, aggrclient, ns)
 	})
 
 	f := framework.NewDefaultFramework("aggregator")
@@ -101,9 +109,9 @@ var _ = SIGDescribe("Aggregator", func() {
 		TestSampleAPIServer(f, aggrclient, imageutils.GetE2EImage(imageutils.APIServer))
 	})
 
-	ginkgo.It("Should be able to support the 1.17 Sample API Server using the current Aggregator2", func() {
+	ginkgo.It("Should be able to replace APIServiceStatus and delete a collection of APIServices", func() {
 		// Testing a 1.17 version of the sample-apiserver
-		TestSampleAPIServer2(f, aggrclient, imageutils.GetE2EImage(imageutils.APIServer))
+		TestAPIService(f, aggrclient, imageutils.GetE2EImage(imageutils.APIServer))
 	})
 })
 
@@ -568,9 +576,10 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 	cleanTest(client, aggrclient, namespace)
 }
 
-// TestSampleAPIServer is a basic test if the sample-apiserver code from 1.10 and compiled against 1.10
-// will work on the current Aggregator/API-Server.
-func TestSampleAPIServer2(f *framework.Framework, aggrclient *aggregatorclient.Clientset, image string) {
+// TestAPIService uses the sample-apiserver
+// (v1beta1.wardle.example.com) to test replace
+// status and deleteCollection APIService endpoints
+func TestAPIService(f *framework.Framework, aggrclient *aggregatorclient.Clientset, image string) {
 	ginkgo.By("Registering the sample API server.")
 	client := f.ClientSet
 	restClient := client.Discovery().RESTClient()
@@ -793,8 +802,9 @@ func TestSampleAPIServer2(f *framework.Framework, aggrclient *aggregatorclient.C
 	framework.ExpectNoError(err, "deploying extension apiserver in namespace %s", namespace)
 
 	// kubectl create -f apiservice.yaml
+	label := map[string]string{"apiservice": "created"}
 	_, err = aggrclient.ApiregistrationV1().APIServices().Create(context.TODO(), &apiregistrationv1.APIService{
-		ObjectMeta: metav1.ObjectMeta{Name: "v1beta1.wardle.example.com"},
+		ObjectMeta: metav1.ObjectMeta{Name: "v1beta1.wardle.example.com", Labels: label},
 		Spec: apiregistrationv1.APIServiceSpec{
 			Service: &apiregistrationv1.ServiceReference{
 				Namespace: namespace,
@@ -855,6 +865,75 @@ func TestSampleAPIServer2(f *framework.Framework, aggrclient *aggregatorclient.C
 		}
 	}
 	framework.ExpectNoError(err, "gave up waiting for apiservice wardle to come up successfully")
+
+	ginkgo.By("updating the APIService Status")
+	var statusToUpdate, updatedStatus *apiregistrationv1.APIService
+	apiServiceName := "v1beta1.wardle.example.com"
+	apiServiceClient := aggrclient.ApiregistrationV1().APIServices()
+
+	w := &cache.ListWatch{
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			options.LabelSelector = "apiservice=created"
+			return apiServiceClient.Watch(context.TODO(), options)
+		},
+	}
+
+	apiServiceList, err := apiServiceClient.List(context.TODO(), metav1.ListOptions{LabelSelector: "apiservice=created"})
+	framework.ExpectNoError(err, "failed to list API Services")
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		statusToUpdate, err = apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "Unable to retrieve api service %s", apiServiceName)
+
+		statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, apiregistrationv1.APIServiceCondition{
+			Type:    "StatusUpdate",
+			Status:  "True",
+			Reason:  "E2E",
+			Message: "Set from e2e test",
+		})
+
+		updatedStatus, err = apiServiceClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
+		return err
+	})
+	framework.ExpectNoError(err, "Failed to update status. %v", err)
+	framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
+
+	ginkgo.By("watching for the APIService to be updated")
+	ctx, cancel := context.WithTimeout(context.Background(), apiServiceRetryTimeout)
+	defer cancel()
+	_, err = watchtools.Until(ctx, apiServiceList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+		if resource, ok := event.Object.(*apiregistrationv1.APIService); ok {
+			found := resource.ObjectMeta.Name == apiServiceName &&
+				resource.Labels["apiservice"] == "created"
+			if !found {
+				framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, resource.Status.Conditions)
+				return false, nil
+			}
+			for _, cond := range resource.Status.Conditions {
+				if cond.Type == "StatusUpdate" &&
+					cond.Reason == "E2E" &&
+					cond.Message == "Set from e2e test" {
+					framework.Logf("Found APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, cond)
+					return found, nil
+				} else {
+					framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, cond)
+				}
+			}
+			return false, nil
+		}
+		framework.Logf("Observed event: %+v", event.Object)
+		return false, nil
+	})
+	framework.ExpectNoError(err, "failed to locate APIService %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
+	framework.Logf("APIService Status for %s has been updated", apiServiceName)
+
+	ginkgo.By("Delete a collection of APIServices")
+	one := int64(1)
+	err = aggrclient.ApiregistrationV1().APIServices().DeleteCollection(context.TODO(),
+		metav1.DeleteOptions{GracePeriodSeconds: &one},
+		metav1.ListOptions{LabelSelector: "apiservice=created"})
+	framework.ExpectNoError(err, "Unable to delete apiservice %s", apiServiceName)
+	framework.Logf("APIService %s has been deleted.", apiServiceName)
 
 	cleanBetaTest(client, aggrclient, namespace)
 }
