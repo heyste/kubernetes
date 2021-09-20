@@ -748,6 +748,141 @@ func TestDefaultProxyTransport(t *testing.T) {
 	}
 }
 
+func TestProxyRedirectsforRootPath(t *testing.T) {
+
+	tests := []struct {
+		name                  string
+		method                string
+		requestPath           string
+		expectedPath          string
+		requestBody           string
+		requestParams         map[string]string
+		requestHeader         map[string]string
+		responseHeader        map[string]string
+		expectedRespHeader    map[string]string
+		expectedStatusCode    int
+		notExpectedRespHeader []string
+		upgradeRequired       bool
+		appendLocationPath    bool
+		expectError           func(err error) bool
+		useLocationHost       bool
+	}{
+		{
+			name:               "root path, simple get",
+			method:             "GET",
+			requestPath:        "/",
+			expectedPath:       "/",
+			expectedStatusCode: 301,
+			appendLocationPath: false,
+		},
+		{
+			name:               "root path, simple put",
+			method:             "PUT",
+			requestPath:        "/",
+			expectedPath:       "/",
+			expectedStatusCode: 200,
+			appendLocationPath: false,
+		},
+	}
+
+	for i, test := range tests {
+		func() {
+
+			fmt.Printf("Test Case: %#v\n", i)
+			fmt.Println(">> ======================== ")
+			fmt.Printf("test: %#v\n", test)
+			fmt.Println(">> ======================== ")
+
+			fmt.Println("Create downstream Server")
+			fmt.Println(">> ======================== ")
+			downstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				// Write successful response
+				w.Write([]byte("Response from Downstream Server"))
+			}))
+			defer downstreamServer.Close()
+
+			fmt.Println("Create Proxy Server")
+			fmt.Println(">> ======================== ")
+			responder := &fakeResponder{t: t}
+			backendURL, _ := url.Parse(downstreamServer.URL)
+			proxyHandler := NewUpgradeAwareHandler(backendURL, nil, false, false, responder)
+			proxyServer := httptest.NewServer(proxyHandler)
+			defer proxyServer.Close()
+
+			fmt.Println("Dial the proxy server")
+			fmt.Println(">> ======================== ")
+			conn, err := net.Dial(proxyServer.Listener.Addr().Network(), proxyServer.Listener.Addr().String())
+			if err != nil {
+				t.Errorf("unexpected error %v", err)
+				return
+			}
+			defer conn.Close()
+
+			// Read response
+			fmt.Println("Read response")
+			fmt.Println(">> ======================== ")
+
+			sampleData := []byte("abcde")
+			headers := http.Header{}
+			headers.Add("Connection", "close")
+			headers.Add("Host", proxyServer.Listener.Addr().String())
+
+			// Write the request headers
+			if _, err := fmt.Fprint(conn, "POST / HTTP/1.1\r\n"); err != nil {
+				t.Fatalf("unexpected error %v", err)
+			}
+			for header, values := range headers {
+				for _, value := range values {
+					if _, err := fmt.Fprintf(conn, "%s: %s\r\n", header, value); err != nil {
+						t.Fatalf("unexpected error %v", err)
+					}
+				}
+			}
+
+			// Header separator
+			if _, err := fmt.Fprint(conn, "\r\n"); err != nil {
+				t.Fatalf("unexpected error %v", err)
+			}
+
+			// Body
+			if _, err := conn.Write(sampleData); err != nil {
+				t.Fatalf("unexpected error %v", err)
+			}
+
+			response, err := ioutil.ReadAll(conn)
+
+			if err != nil {
+				t.Errorf("unexpected error %v", err)
+				return
+			}
+			fmt.Printf("Response (type): %T \n", response)
+			fmt.Printf("Response: %v \n", string(response))
+
+			fmt.Println(".end ")
+			fmt.Println(">> ======================== ")
+
+			req, err := http.ReadRequest(bufio.NewReader(strings.NewReader("GET http://example.com HTTP/1.1\r\nHost: test\r\n\r\n")))
+			if err != nil {
+				t.Errorf("%s", err)
+			}
+			mux := http.NewServeMux()
+			resp := httptest.NewRecorder()
+			mux.ServeHTTP(resp, req)
+			if got, want := resp.Header().Get("Location"), "/"; got != want {
+				t.Errorf("Location header expected %v; got %v", got, want)
+			}
+
+			fmt.Printf("resp: %#v\n", resp)
+			fmt.Println(">> ======================== ")
+
+			if got, want := resp.Code, http.StatusMovedPermanently; got != want {
+				t.Errorf("Expected response code %d; got %d", want, got)
+			}
+
+		}()
+	}
+}
+
 func TestProxyRequestContentLengthAndTransferEncoding(t *testing.T) {
 	chunk := func(data []byte) []byte {
 		out := &bytes.Buffer{}
