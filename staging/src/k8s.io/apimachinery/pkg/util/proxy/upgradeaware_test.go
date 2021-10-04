@@ -1055,6 +1055,53 @@ func TestErrorPropagation(t *testing.T) {
 	}
 }
 
+func TestProxyRedirectsforRootPath(t *testing.T) {
+
+	tests := []struct {
+		name               string
+		method             string
+		requestPath        string
+		expectedStatusCode int
+		redirect           bool
+	}{
+		{
+			name:               "root path, simple get",
+			method:             "GET",
+			requestPath:        "",
+			redirect:           true,
+			expectedStatusCode: 301,
+		},
+		{
+			name:               "root path, simple put",
+			method:             "PUT",
+			requestPath:        "",
+			redirect:           false,
+			expectedStatusCode: 200,
+		},
+	}
+
+	for i, test := range tests {
+		func() {
+
+			fmt.Printf("Test Case: %#v\n", i)
+			fmt.Printf("test: %#v\n", test)
+
+			var w http.ResponseWriter
+			// var updateHeaders http.ResponseWriter
+			var req *http.Request
+
+			redirect, updatedHeaders := proxyRedirectsforRootPath(test.requestPath, w, req)
+			if got, want := test.redirect, redirect; got != want {
+				t.Errorf("Expected redirect state %v; got %v", want, got)
+			}
+
+			t.Logf("updatedHeaders: %#v\n", updatedHeaders)
+
+			fmt.Println(">> ======================== ")
+		}()
+	}
+}
+
 // exampleCert was generated from crypto/tls/generate_cert.go with the following command:
 //    go run generate_cert.go  --rsa-bits 1024 --host example.com --ca --start-date "Jan 1 00:00:00 1970" --duration=1000000h
 var exampleCert = []byte(`-----BEGIN CERTIFICATE-----
