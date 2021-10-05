@@ -1078,6 +1078,20 @@ func TestProxyRedirectsforRootPath(t *testing.T) {
 			redirect:           false,
 			expectedStatusCode: 200,
 		},
+		{
+			name:               "root path, simple head",
+			method:             "HEAD",
+			requestPath:        "",
+			redirect:           true,
+			expectedStatusCode: 301,
+		},
+		{
+			name:               "root path, simple delete with params",
+			method:             "DELETE",
+			requestPath:        "",
+			redirect:           false,
+			expectedStatusCode: 200,
+		},
 	}
 
 	for i, test := range tests {
@@ -1086,16 +1100,33 @@ func TestProxyRedirectsforRootPath(t *testing.T) {
 			fmt.Printf("Test Case: %#v\n", i)
 			fmt.Printf("test: %#v\n", test)
 
-			var w http.ResponseWriter
-			// var updateHeaders http.ResponseWriter
-			var req *http.Request
+			w := httptest.NewRecorder()
+			req, err := http.NewRequest(test.method, test.requestPath, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-			redirect, updatedHeaders := proxyRedirectsforRootPath(test.requestPath, w, req)
-			if got, want := test.redirect, redirect; got != want {
+			redirect, _ := proxyRedirectsforRootPath(test.requestPath, w, req)
+			if got, want := redirect, test.redirect; got != want {
 				t.Errorf("Expected redirect state %v; got %v", want, got)
 			}
 
-			t.Logf("updatedHeaders: %#v\n", updatedHeaders)
+			// fmt.Printf("ResponseWriter: %#v\n", rw)
+			// fmt.Printf("ResponseWriter: %T\n", rw)
+
+			res := w.Result()
+
+			// fmt.Printf("Response: %#v\n", res)
+			// fmt.Printf("Response: %T\n", res)
+
+			// fmt.Printf("headers: %T\n", &updatedHeaders.Code)
+			// fmt.Printf("headers.Code: %#v\n", updatedHeaders.Code)
+			if got, want := res.StatusCode, test.expectedStatusCode; got != want {
+				t.Errorf("Expected status code %d; got %d", want, got)
+			}
+
+			fmt.Printf("Response Header: %#v\n", res.Header)
+			// t.Logf("updatedHeaders: %#v\n", updatedHeaders)
 
 			fmt.Println(">> ======================== ")
 		}()
