@@ -1061,6 +1061,7 @@ func TestProxyRedirectsforRootPath(t *testing.T) {
 		name               string
 		method             string
 		requestPath        string
+		expectedHeader     http.Header
 		expectedStatusCode int
 		redirect           bool
 	}{
@@ -1070,6 +1071,9 @@ func TestProxyRedirectsforRootPath(t *testing.T) {
 			requestPath:        "",
 			redirect:           true,
 			expectedStatusCode: 301,
+			expectedHeader: http.Header{
+				"Location": []string{"/"},
+			},
 		},
 		{
 			name:               "root path, simple put",
@@ -1084,6 +1088,9 @@ func TestProxyRedirectsforRootPath(t *testing.T) {
 			requestPath:        "",
 			redirect:           true,
 			expectedStatusCode: 301,
+			expectedHeader: http.Header{
+				"Location": []string{"/"},
+			},
 		},
 		{
 			name:               "root path, simple delete with params",
@@ -1094,12 +1101,8 @@ func TestProxyRedirectsforRootPath(t *testing.T) {
 		},
 	}
 
-	for i, test := range tests {
+	for _, test := range tests {
 		func() {
-
-			fmt.Printf("Test Case: %#v\n", i)
-			fmt.Printf("test: %#v\n", test)
-
 			w := httptest.NewRecorder()
 			req, err := http.NewRequest(test.method, test.requestPath, nil)
 			if err != nil {
@@ -1111,24 +1114,14 @@ func TestProxyRedirectsforRootPath(t *testing.T) {
 				t.Errorf("Expected redirect state %v; got %v", want, got)
 			}
 
-			// fmt.Printf("ResponseWriter: %#v\n", rw)
-			// fmt.Printf("ResponseWriter: %T\n", rw)
-
 			res := w.Result()
-
-			// fmt.Printf("Response: %#v\n", res)
-			// fmt.Printf("Response: %T\n", res)
-
-			// fmt.Printf("headers: %T\n", &updatedHeaders.Code)
-			// fmt.Printf("headers.Code: %#v\n", updatedHeaders.Code)
 			if got, want := res.StatusCode, test.expectedStatusCode; got != want {
 				t.Errorf("Expected status code %d; got %d", want, got)
 			}
 
-			fmt.Printf("Response Header: %#v\n", res.Header)
-			// t.Logf("updatedHeaders: %#v\n", updatedHeaders)
-
-			fmt.Println(">> ======================== ")
+			if res.StatusCode == 301 && !reflect.DeepEqual(res.Header, test.expectedHeader) {
+				t.Errorf("Expected location header to be %v, got %v", test.expectedHeader, res.Header)
+			}
 		}()
 	}
 }
