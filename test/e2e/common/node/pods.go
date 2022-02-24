@@ -33,11 +33,13 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
@@ -1052,6 +1054,49 @@ var _ = SIGDescribe("Pods", func() {
 			return false, nil
 		})
 		framework.ExpectNoError(err, "failed to see %v event", watch.Deleted)
+	})
+
+	ginkgo.It("should patch a pod status", func() {
+		one := int64(1)
+		ns := f.Namespace.Name
+		podClient := f.ClientSet.CoreV1().Pods(ns)
+		podName := "pod-" + utilrand.String(5)
+
+		ginkgo.By("Create a pod")
+
+		testPod := v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: podName,
+			},
+			Spec: v1.PodSpec{
+				TerminationGracePeriodSeconds: &one,
+				Containers: []v1.Container{
+					{
+						Name:  "webserver",
+						Image: imageutils.GetE2EImage(imageutils.Httpd),
+					},
+				},
+			},
+		}
+
+		createdPod, err := podClient.Create(context.TODO(), &testPod, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "failed to create Pod %v in namespace %v", testPod.ObjectMeta.Name, ns)
+
+		ginkgo.By("patching /status")
+		pStatus, err := podClient.Patch(context.TODO(), podName, types.MergePatchType,
+			[]byte(`{"metadata":{"annotations":{"patchedstatus":"true"}},"status":{"reason":"E2E","message":"Some message here!"}}`),
+			metav1.PatchOptions{}, "status")
+		framework.ExpectNoError(err)
+		framework.Logf("pStatus: %#v", pStatus.Status)
+
+		ginkgo.By("get /status")
+		pResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
+		gottenStatus, err := f.DynamicClient.Resource(pResource).Namespace(ns).Get(context.TODO(), podName, metav1.GetOptions{}, "status")
+		framework.ExpectNoError(err)
+		statusUID, _, err := unstructured.NestedFieldCopy(gottenStatus.Object, "metadata", "uid")
+		framework.ExpectNoError(err)
+		framework.ExpectEqual(string(createdPod.UID), statusUID, fmt.Sprintf("pod.UID: %v expected to match statusUID: %v ", createdPod.UID, statusUID))
+		framework.Logf("Status: %#v", gottenStatus)
 	})
 })
 
