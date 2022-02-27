@@ -1061,12 +1061,23 @@ var _ = SIGDescribe("Pods", func() {
 		ns := f.Namespace.Name
 		podClient := f.ClientSet.CoreV1().Pods(ns)
 		podName := "pod-" + utilrand.String(5)
+		label := map[string]string{"patch-pod": podName}
+		labelSelector := labels.SelectorFromSet(label).String()
+
+		w := &cache.ListWatch{
+			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+				options.LabelSelector = labelSelector
+				return podClient.Watch(context.TODO(), options)
+			},
+		}
+		podsList, err := podClient.List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+		framework.ExpectNoError(err, "failed to list Pods")
 
 		ginkgo.By("Create a pod")
-
 		testPod := v1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: podName,
+				Name:   podName,
+				Labels: label,
 			},
 			Spec: v1.PodSpec{
 				TerminationGracePeriodSeconds: &one,
@@ -1078,16 +1089,77 @@ var _ = SIGDescribe("Pods", func() {
 				},
 			},
 		}
-
 		createdPod, err := podClient.Create(context.TODO(), &testPod, metav1.CreateOptions{})
 		framework.ExpectNoError(err, "failed to create Pod %v in namespace %v", testPod.ObjectMeta.Name, ns)
 
+		ginkgo.By("watching for Pod to be ready")
+		ctx, cancel := context.WithTimeout(context.Background(), f.Timeouts.PodStart)
+		defer cancel()
+		_, err = watchtools.Until(ctx, podsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+			if pod, ok := event.Object.(*v1.Pod); ok {
+				found := pod.ObjectMeta.Name == testPod.ObjectMeta.Name &&
+					pod.ObjectMeta.Namespace == ns &&
+					pod.Labels["patch-pod"] == podName &&
+					pod.Status.Phase == v1.PodRunning
+				if !found {
+					framework.Logf("observed Pod %v in namespace %v in phase %v with labels: %v & conditions %v", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace, pod.Status.Phase, pod.Labels, pod.Status.Conditions)
+					return false, nil
+				}
+				framework.Logf("Found Pod %v in namespace %v in phase %v with labels: %v & conditions %v", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace, pod.Status.Phase, pod.Labels, pod.Status.Conditions)
+				return found, nil
+			}
+			framework.Logf("Observed event: %+v", event.Object)
+			return false, nil
+		})
+		if err != nil {
+			p, _ := podClient.Get(context.TODO(), podName, metav1.GetOptions{})
+			framework.Logf("Pod: %+v", p)
+		}
+		framework.ExpectNoError(err, "failed to see Pod %v in namespace %v running", testPod.ObjectMeta.Name, ns)
+
 		ginkgo.By("patching /status")
+		podStatus := v1.PodStatus{
+			Reason:  "E2E",
+			Message: "Set from an e2e test",
+		}
+		pStatusJSON, err := json.Marshal(podStatus)
+		framework.ExpectNoError(err, "Failed to marshal. %v", podStatus)
+
 		pStatus, err := podClient.Patch(context.TODO(), podName, types.MergePatchType,
-			[]byte(`{"metadata":{"annotations":{"patchedstatus":"true"}},"status":{"reason":"E2E","message":"Some message here!"}}`),
+			[]byte(`{"metadata":{"annotations":{"patchedstatus":"true"}},"status":`+string(pStatusJSON)+`}`),
 			metav1.PatchOptions{}, "status")
 		framework.ExpectNoError(err)
-		framework.Logf("pStatus: %#v", pStatus.Status)
+		framework.Logf("pStatus: %#v\n", pStatus.Status)
+
+		ginkgo.By("watching for the Pod status to be patched")
+		ctx, cancel = context.WithTimeout(context.Background(), podRetryTimeout)
+
+		_, err = watchtools.Until(ctx, podsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+
+			defer cancel()
+			if e, ok := event.Object.(*v1.Pod); ok {
+				framework.Logf("e.Name: %#v e.NS: %#v  e.Labels: %#v\n", e.ObjectMeta.Name, e.ObjectMeta.Namespace, e.ObjectMeta.Labels)
+				found := e.ObjectMeta.Name == pStatus.ObjectMeta.Name &&
+					e.ObjectMeta.Namespace == pStatus.ObjectMeta.Namespace &&
+					e.ObjectMeta.Labels["patch-pod"] == pStatus.ObjectMeta.Labels["patch-pod"]
+				if !found {
+					framework.Logf("Observed Pod %v in namespace %v with annotations: %v & Conditions: %v", pStatus.ObjectMeta.Name, pStatus.ObjectMeta.Namespace, pStatus.Annotations, pStatus.Status.Conditions)
+					return false, nil
+				}
+				for _, cond := range e.Status.Conditions {
+					if cond.Type == "StatusPatched" {
+						framework.Logf("Found Pod %v in namespace %v with labels: %v annotations: %v & Conditions: %v", pStatus.ObjectMeta.Name, pStatus.ObjectMeta.Namespace, pStatus.ObjectMeta.Labels, pStatus.Annotations, cond)
+						return found, nil
+					}
+					framework.Logf("Observed Pod %v in namespace %v with annotations: %v & Conditions: %v", pStatus.ObjectMeta.Name, pStatus.ObjectMeta.Namespace, pStatus.Annotations, cond)
+				}
+			}
+			object := strings.Split(fmt.Sprintf("%v", event.Object), "{")[0]
+			framework.Logf("Observed %v event: %+v", object, event.Type)
+			return false, nil
+		})
+		framework.ExpectNoError(err, "failed to locate Pod %v in namespace %v", pStatus.ObjectMeta.Name, ns)
+		framework.Logf("Pod %s has an updated status", podName)
 
 		ginkgo.By("get /status")
 		pResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
@@ -1096,7 +1168,6 @@ var _ = SIGDescribe("Pods", func() {
 		statusUID, _, err := unstructured.NestedFieldCopy(gottenStatus.Object, "metadata", "uid")
 		framework.ExpectNoError(err)
 		framework.ExpectEqual(string(createdPod.UID), statusUID, fmt.Sprintf("pod.UID: %v expected to match statusUID: %v ", createdPod.UID, statusUID))
-		framework.Logf("Status: %#v", gottenStatus)
 	})
 })
 
