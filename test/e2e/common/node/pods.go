@@ -1061,7 +1061,7 @@ var _ = SIGDescribe("Pods", func() {
 		ns := f.Namespace.Name
 		podClient := f.ClientSet.CoreV1().Pods(ns)
 		podName := "pod-" + utilrand.String(5)
-		label := map[string]string{"patch-pod": podName}
+		label := map[string]string{"e2e": podName}
 		labelSelector := labels.SelectorFromSet(label).String()
 
 		w := &cache.ListWatch{
@@ -1099,7 +1099,7 @@ var _ = SIGDescribe("Pods", func() {
 			if pod, ok := event.Object.(*v1.Pod); ok {
 				found := pod.ObjectMeta.Name == testPod.ObjectMeta.Name &&
 					pod.ObjectMeta.Namespace == ns &&
-					pod.Labels["patch-pod"] == podName &&
+					pod.Labels["e2e"] == podName &&
 					pod.Status.Phase == v1.PodRunning
 				if !found {
 					framework.Logf("observed Pod %v in namespace %v in phase %v with labels: %v & conditions %v", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace, pod.Status.Phase, pod.Labels, pod.Status.Conditions)
@@ -1132,7 +1132,10 @@ var _ = SIGDescribe("Pods", func() {
 		framework.Logf("pStatus: %#v\n", pStatus.Status)
 
 		ginkgo.By("watching for the Pod status to be patched")
-		ctx, cancel = context.WithTimeout(context.Background(), podRetryTimeout)
+		// ctx, cancel = context.WithTimeout(context.Background(), podRetryTimeout)
+		framework.Logf("f.Timeouts.PodStart: %#v\n", f.Timeouts.PodStart)
+		framework.Logf("f.Timeouts.PodStart is 5mins: %v\n", f.Timeouts.PodStart == 5*time.Minute)
+		ctx, cancel = context.WithTimeout(context.Background(), f.Timeouts.PodStart)
 
 		_, err = watchtools.Until(ctx, podsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
 
@@ -1141,13 +1144,13 @@ var _ = SIGDescribe("Pods", func() {
 				framework.Logf("e.Name: %#v e.NS: %#v  e.Labels: %#v\n", e.ObjectMeta.Name, e.ObjectMeta.Namespace, e.ObjectMeta.Labels)
 				found := e.ObjectMeta.Name == pStatus.ObjectMeta.Name &&
 					e.ObjectMeta.Namespace == pStatus.ObjectMeta.Namespace &&
-					e.ObjectMeta.Labels["patch-pod"] == pStatus.ObjectMeta.Labels["patch-pod"]
+					e.ObjectMeta.Labels["e2e"] == pStatus.ObjectMeta.Labels["e2e"]
 				if !found {
 					framework.Logf("Observed Pod %v in namespace %v with annotations: %v & Conditions: %v", pStatus.ObjectMeta.Name, pStatus.ObjectMeta.Namespace, pStatus.Annotations, pStatus.Status.Conditions)
 					return false, nil
 				}
 				for _, cond := range e.Status.Conditions {
-					if cond.Type == "StatusPatched" {
+					if cond.Reason == "E2E" {
 						framework.Logf("Found Pod %v in namespace %v with labels: %v annotations: %v & Conditions: %v", pStatus.ObjectMeta.Name, pStatus.ObjectMeta.Namespace, pStatus.ObjectMeta.Labels, pStatus.Annotations, cond)
 						return found, nil
 					}
