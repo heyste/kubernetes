@@ -918,7 +918,7 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		}
 	})
 
-	framework.ConformanceIt("should be able to delete a collection of ResourceQuotas", func() {
+	ginkgo.It("should be able to delete a collection of ResourceQuotas", func() {
 		client := f.ClientSet
 		ns := f.Namespace.Name
 
