@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/quota/v1/evaluator/core"
@@ -915,6 +916,42 @@ var _ = SIGDescribe("ResourceQuota", func() {
 			framework.Failf("Expected `not found` error, got: %v", err)
 		}
 	})
+
+	framework.ConformanceIt("should be able to delete a collection of ResourceQuotas", func() {
+		client := f.ClientSet
+		ns := f.Namespace.Name
+
+		ginkgo.By("Creating a ResourceQuota")
+		quotaName := "test-quota-" + utilrand.String(5)
+		resourceQuota := &v1.ResourceQuota{
+			Spec: v1.ResourceQuotaSpec{
+				Hard: v1.ResourceList{},
+			},
+		}
+		resourceQuota.ObjectMeta.Name = quotaName
+		resourceQuota.Spec.Hard[v1.ResourceCPU] = resource.MustParse("1")
+		resourceQuota.Spec.Hard[v1.ResourceMemory] = resource.MustParse("500Mi")
+		_, err := createResourceQuota(client, ns, resourceQuota)
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Getting a ResourceQuota")
+		resourceQuotaResult, err := client.CoreV1().ResourceQuotas(ns).Get(context.TODO(), quotaName, metav1.GetOptions{})
+		framework.ExpectNoError(err)
+		framework.ExpectEqual(resourceQuotaResult.Spec.Hard[v1.ResourceCPU], resource.MustParse("1"))
+		framework.ExpectEqual(resourceQuotaResult.Spec.Hard[v1.ResourceMemory], resource.MustParse("500Mi"))
+
+		ginkgo.By("Deleting a Collection of ResourceQuotas")
+		err = client.CoreV1().ResourceQuotas(ns).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Verifying the deleted ResourceQuota")
+		_, err = client.CoreV1().ResourceQuotas(ns).Get(context.TODO(), quotaName, metav1.GetOptions{})
+		if !apierrors.IsNotFound(err) {
+			framework.Failf("Expected `not found` error, got: %v", err)
+		}
+
+	})
+
 })
 
 var _ = SIGDescribe("ResourceQuota [Feature:ScopeSelectors]", func() {
