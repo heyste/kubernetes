@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -951,6 +952,12 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		rq, err := client.CoreV1().ResourceQuotas("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "Failed to list job. %v", err)
 		framework.ExpectEqual(len(rq.Items), 1, "Failed to find ResourceQuotes %v", rqName)
+
+		ginkgo.By("Patching the ResourceQuota")
+		payload := "{\"metadata\":{\"labels\":{\"" + rqName + "\":\"patched\"}}}"
+		patchedResourceQuota, err := client.CoreV1().ResourceQuotas(ns).Patch(context.TODO(), rqName, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
+		framework.ExpectNoError(err, "failed to patch ResourceQuota %s in namespace %s", rqName, ns)
+		framework.ExpectEqual(patchedResourceQuota.Labels[rqName], "patched", "Did not find the label for this ResourceQuota. Current labels: %v", patchedResourceQuota.Labels)
 
 		ginkgo.By("Deleting a Collection of ResourceQuotas")
 		err = client.CoreV1().ResourceQuotas(ns).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelector})
