@@ -919,7 +919,7 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		}
 	})
 
-	ginkgo.It("should be able to delete a collection of ResourceQuotas", func() {
+	ginkgo.It("should manage the lifecycle of a ResourceQuota", func() {
 		client := f.ClientSet
 		ns := f.Namespace.Name
 
