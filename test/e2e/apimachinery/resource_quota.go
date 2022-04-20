@@ -29,7 +29,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/quota/v1/evaluator/core"
@@ -915,6 +917,37 @@ var _ = SIGDescribe("ResourceQuota", func() {
 			framework.Failf("Expected `not found` error, got: %v", err)
 		}
 	})
+
+	ginkgo.It("should apply changes to a resourcequota status", func() {
+		client := f.ClientSet
+		ns := f.Namespace.Name
+
+		rqName := "e2e-quotastatus-" + utilrand.String(5)
+		label := map[string]string{"e2e-rq-label": rqName}
+
+		ginkgo.By("Creating a ResourceQuota")
+		resourceQuota := &v1.ResourceQuota{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   rqName,
+				Labels: label,
+			},
+			Spec: v1.ResourceQuotaSpec{
+				Hard: v1.ResourceList{},
+			},
+		}
+		resourceQuota.Spec.Hard[v1.ResourceCPU] = resource.MustParse("1")
+		resourceQuota.Spec.Hard[v1.ResourceMemory] = resource.MustParse("500Mi")
+		_, err := createResourceQuota(client, ns, resourceQuota)
+		framework.ExpectNoError(err)
+
+		ginkgo.By("get /status")
+		rqResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
+		gottenStatus, err := f.DynamicClient.Resource(rqResource).Namespace(ns).Get(context.TODO(), resourceQuota.Name, metav1.GetOptions{}, "status")
+		framework.ExpectNoError(err)
+		framework.Logf("gottenStatus: %#v", gottenStatus)
+
+	})
+
 })
 
 var _ = SIGDescribe("ResourceQuota [Feature:ScopeSelectors]", func() {
