@@ -282,4 +282,24 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		framework.ExpectEqual(namespace.ObjectMeta.Labels["testLabel"], "testValue", "namespace not patched")
 	})
 
+	ginkgo.It("should apply changes to a namespace status", func() {
+		client := f.ClientSet
+		restClient := client.Discovery().RESTClient()
+		ns := f.Namespace.Name
+
+		ginkgo.By("Read namespace status")
+		path := "/api/v1/namespaces/" + ns + "/status"
+
+		nsResponse, err := restClient.Get().
+			AbsPath(path).
+			SetHeader("Accept", "application/json").DoRaw(context.TODO())
+		framework.ExpectNoError(err, "No response for %s Error: %v", path, err)
+
+		var currentNS *v1.Namespace
+		err = json.Unmarshal([]byte(nsResponse), &currentNS)
+		framework.ExpectNoError(err, "Failed to process nsResponse: %v | err: %v ", string(nsResponse), err)
+
+		framework.Logf("status: %#v", string(nsResponse))
+		framework.Logf("status: %#v", currentNS.Status)
+	})
 })
