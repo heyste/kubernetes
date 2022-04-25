@@ -968,9 +968,7 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		if !apierrors.IsNotFound(err) {
 			framework.Failf("Expected `not found` error, got: %v", err)
 		}
-
 	})
-
 })
 
 var _ = SIGDescribe("ResourceQuota [Feature:ScopeSelectors]", func() {
