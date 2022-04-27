@@ -288,12 +288,12 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		ns := f.Namespace.Name
 
 		ginkgo.By("Read namespace status")
-		path := "/api/v1/namespaces/" + ns + "/status"
+		nsPath := "/api/v1/namespaces/" + ns + "/status"
 
 		nsResponse, err := restClient.Get().
-			AbsPath(path).
+			AbsPath(nsPath).
 			SetHeader("Accept", "application/json").DoRaw(context.TODO())
-		framework.ExpectNoError(err, "No response for %s Error: %v", path, err)
+		framework.ExpectNoError(err, "No response for %s Error: %v", nsPath, err)
 
 		var currentNS *v1.Namespace
 		err = json.Unmarshal([]byte(nsResponse), &currentNS)
@@ -301,5 +301,16 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 
 		framework.Logf("status: %#v", string(nsResponse))
 		framework.Logf("status: %#v", currentNS.Status)
+
+		ginkgo.By("Patch namespace status")
+
+		patchStatusContent, err := restClient.Patch(types.MergePatchType).
+			AbsPath(nsPath).
+			SetHeader("Accept", "application/json").
+			Body([]byte(`{"status":{"conditions": [{"message": "patched"}]}}`)).
+			DoRaw(context.TODO())
+		framework.Logf("err: %#v", err)
+		framework.Logf("patchStatusContent:\n%#v", string(patchStatusContent))
+
 	})
 })
