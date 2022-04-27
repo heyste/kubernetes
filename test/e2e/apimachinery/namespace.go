@@ -298,19 +298,26 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		var currentNS *v1.Namespace
 		err = json.Unmarshal([]byte(nsResponse), &currentNS)
 		framework.ExpectNoError(err, "Failed to process nsResponse: %v | err: %v ", string(nsResponse), err)
-
-		framework.Logf("status: %#v", string(nsResponse))
 		framework.Logf("status: %#v", currentNS.Status)
 
 		ginkgo.By("Patch namespace status")
+		payload, err := json.Marshal(v1.NamespaceCondition{
+			Type:    "StatusUpdate",
+			Status:  v1.ConditionTrue,
+			Reason:  "E2E",
+			Message: "Set from an e2e test",
+		})
+		framework.ExpectNoError(err, "failed to marshal unstructured response")
 
-		patchStatusContent, err := restClient.Patch(types.MergePatchType).
+		fullpayload := "{\"status\": {\"conditions\": [" + string(payload) + "]}}"
+		patchStatusContent, err := restClient.Patch(types.StrategicMergePatchType).
 			AbsPath(nsPath).
 			SetHeader("Accept", "application/json").
-			Body([]byte(`{"status":{"conditions": [{"message": "patched"}]}}`)).
+			Body([]byte(fullpayload)).
 			DoRaw(context.TODO())
-		framework.Logf("err: %#v", err)
-		framework.Logf("patchStatusContent:\n%#v", string(patchStatusContent))
+		framework.ExpectNoError(err, "Failed to patch status. err: %v ", err)
+		framework.Logf("patchStatusContent: %#v", string(patchStatusContent))
+		framework.Logf("patchStatusContent: %T", string(patchStatusContent))
 
 	})
 })
