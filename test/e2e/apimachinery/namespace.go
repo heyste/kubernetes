@@ -316,8 +316,13 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 			Body([]byte(fullpayload)).
 			DoRaw(context.TODO())
 		framework.ExpectNoError(err, "Failed to patch status. err: %v ", err)
-		framework.Logf("patchStatusContent: %#v", string(patchStatusContent))
-		framework.Logf("patchStatusContent: %T", string(patchStatusContent))
 
+		var jr *v1.Namespace
+		err = json.Unmarshal([]byte(patchStatusContent), &jr)
+		framework.ExpectNoError(err, "Failed to unmarshal JSON", err)
+
+		framework.Logf("Status.Condition: %#v", jr.Status.Conditions[0])
+		framework.ExpectEqual(jr.Status.Conditions[0].Reason, "E2E", "The Reason returned was %v", jr.Status.Conditions[0].Reason)
+		framework.ExpectEqual(jr.Status.Conditions[0].Message, "Set from an e2e test", "The Message returned was %v", jr.Status.Conditions[0].Message)
 	})
 })
