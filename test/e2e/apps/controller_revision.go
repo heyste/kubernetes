@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/util/retry"
 	extensionsinternal "k8s.io/kubernetes/pkg/apis/extensions"
 	hashutil "k8s.io/kubernetes/pkg/util/hash"
 	labelsutil "k8s.io/kubernetes/pkg/util/labels"
@@ -166,6 +167,36 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 
 		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", initalControllerRevision, "-n", ns)
 		framework.Logf("%s", info)
+
+		// --------------------------------------------------------
+
+		ginkgo.By("Update a ControllerRevision")
+		var updatedControllerRevision *appsv1.ControllerRevision
+
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			updatedControllerRevision, err = cs.AppsV1().ControllerRevisions(ns).Get(context.TODO(), initalControllerRevision, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to get ControllerRevision %s", initalControllerRevision)
+			// patchedJob.Spec.Suspend = pointer.BoolPtr(false)
+			if updatedControllerRevision.Annotations == nil {
+				updatedControllerRevision.Annotations = map[string]string{}
+			}
+			updatedControllerRevision.Annotations["updated"] = "true"
+			updatedControllerRevision, err = cs.AppsV1().ControllerRevisions(ns).Update(context.TODO(), updatedControllerRevision, metav1.UpdateOptions{})
+			//updatedJob, err = e2ejob.UpdateJob(f.ClientSet, ns, patchedJob)
+			return err
+		})
+		framework.ExpectNoError(err, "failed to update ControllerRevision in namespace: %s", ns)
+
+		// --------------------------------------------------------
+
+		ginkgo.By("Checking Updated ControllerRevision")
+		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("%s", info)
+
+		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", initalControllerRevision, "-n", ns)
+		framework.Logf("%s", info)
+
+		// --------------------------------------------------------
 
 		ginkgo.By("Create a new ControllerRevision")
 		newHash, newName := hashAndNameForDaemonSet(ds)
