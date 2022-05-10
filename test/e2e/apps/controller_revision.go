@@ -154,6 +154,19 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", initalControllerRevision, "-n", ns)
 		framework.Logf("%s", info)
 
+		ginkgo.By("Patching the ControllerRevision")
+		payload := "{\"metadata\":{\"labels\":{\"" + initalControllerRevision + "\":\"patched\"}}}"
+		patchedControllerRevision, err := f.ClientSet.AppsV1().ControllerRevisions(ns).Patch(context.TODO(), initalControllerRevision, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
+		framework.ExpectNoError(err, "failed to patch ControllerRevision %s in namespace %s", initalControllerRevision, ns)
+
+		framework.Logf("patchedController Revision: %#v", patchedControllerRevision)
+
+		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("%s", info)
+
+		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", initalControllerRevision, "-n", ns)
+		framework.Logf("%s", info)
+
 		ginkgo.By("Create a new ControllerRevision")
 		newHash, newName := hashAndNameForDaemonSet(ds)
 		newRevision := &appsv1.ControllerRevision{
