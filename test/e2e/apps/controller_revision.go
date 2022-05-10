@@ -131,6 +131,8 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 
 		// Locate all controller revisions for the current Daemon set
 		var revision *appsv1.ControllerRevision
+		var initalControllerRevision string
+
 		for _, rev := range revs.Items {
 			for _, oref := range rev.OwnerReferences {
 				if oref.Kind == "DaemonSet" && oref.UID == ds.UID {
@@ -138,6 +140,7 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 					revision, err = cs.AppsV1().ControllerRevisions(ns).Get(context.TODO(), rev.Name, metav1.GetOptions{})
 					framework.ExpectNoError(err, "failed to lookup ControllerRevision: %v", err)
 					framework.ExpectNotEqual(revision, nil, "failed to lookup ControllerRevision: %v", revision)
+					initalControllerRevision = rev.Name
 				}
 			}
 		}
@@ -156,8 +159,25 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 			Revision: revision.Revision + 1,
 		}
 		newControllerRevision, err := cs.AppsV1().ControllerRevisions(ds.Namespace).Create(context.TODO(), newRevision, metav1.CreateOptions{})
-		framework.ExpectNoError(err, "Failed to create controllerrevision: %v", err)
+		framework.ExpectNoError(err, "Failed to create ControllerRevision: %v", err)
 		framework.Logf("Created ControllerRevision: %v;hash: %v", newControllerRevision.Name, newControllerRevision.ObjectMeta.Labels[appsv1.DefaultDaemonSetUniqueLabelKey])
+
+		info, err := framework.RunKubectl(ns, "describe", "ds", dsName, "-n", ns)
+		framework.Logf("err: %v", err)
+		framework.Logf("%s", info)
+
+		info, err = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("err: %v", err)
+		framework.Logf("%s", info)
+
+		ginkgo.By("Delete initial ControllerRevision for the current DaemonSet")
+		err = cs.AppsV1().ControllerRevisions(ds.Namespace).Delete(context.TODO(), initalControllerRevision, metav1.DeleteOptions{})
+		framework.ExpectNoError(err, "Failed to delete ControllerRevision: %v", err)
+
+		info, err = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("err: %v", err)
+		framework.Logf("%s", info)
+
 	})
 })
 
