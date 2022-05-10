@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
@@ -39,8 +40,10 @@ import (
 	labelsutil "k8s.io/kubernetes/pkg/util/labels"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2edaemonset "k8s.io/kubernetes/test/e2e/framework/daemonset"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2eresource "k8s.io/kubernetes/test/e2e/framework/resource"
 	admissionapi "k8s.io/pod-security-admission/api"
+	"k8s.io/utils/pointer"
 )
 
 // This test must be run in serial because it assumes the Daemon Set pods will
@@ -145,6 +148,12 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 			}
 		}
 
+		info, _ := framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("%s", info)
+
+		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", initalControllerRevision, "-n", ns)
+		framework.Logf("%s", info)
+
 		ginkgo.By("Create a new ControllerRevision")
 		newHash, newName := hashAndNameForDaemonSet(ds)
 		newRevision := &appsv1.ControllerRevision{
@@ -162,20 +171,61 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 		framework.ExpectNoError(err, "Failed to create ControllerRevision: %v", err)
 		framework.Logf("Created ControllerRevision: %v;hash: %v", newControllerRevision.Name, newControllerRevision.ObjectMeta.Labels[appsv1.DefaultDaemonSetUniqueLabelKey])
 
-		info, err := framework.RunKubectl(ns, "describe", "ds", dsName, "-n", ns)
-		framework.Logf("err: %v", err)
-		framework.Logf("%s", info)
+		// info, err := framework.RunKubectl(ns, "describe", "ds", dsName, "-n", ns)
+		// framework.Logf("err: %v", err)
+		// framework.Logf("%s", info)
 
-		info, err = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("err: %v", err)
+		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
 		framework.Logf("%s", info)
 
 		ginkgo.By("Delete initial ControllerRevision for the current DaemonSet")
 		err = cs.AppsV1().ControllerRevisions(ds.Namespace).Delete(context.TODO(), initalControllerRevision, metav1.DeleteOptions{})
 		framework.ExpectNoError(err, "Failed to delete ControllerRevision: %v", err)
 
-		info, err = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("err: %v", err)
+		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("%s", info)
+
+		// Need to update the Daemonset before creating another ControllerRevision
+		nodeSelector := map[string]string{daemonsetColorLabel: "green"}
+		node, err := e2enode.GetRandomReadySchedulableNode(f.ClientSet)
+		framework.ExpectNoError(err)
+		greenNode, err := setDaemonSetNodeLabels(c, node.Name, nodeSelector)
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Update DaemonSet node selector to green, and change its update strategy to RollingUpdate")
+		patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"nodeSelector":{"%s":"%s"}}},"updateStrategy":{"type":"RollingUpdate"}}}`,
+			daemonsetColorLabel, greenNode.Labels[daemonsetColorLabel])
+		ds, err = c.AppsV1().DaemonSets(ns).Patch(context.TODO(), dsName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+		framework.ExpectNoError(err, "error patching daemon set")
+
+		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("%s", info)
+
+		ginkgo.By("Create another ControllerRevision")
+		newHash, newName = hashAndNameForDaemonSet(ds)
+		nextRevision := &appsv1.ControllerRevision{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            newName,
+				Namespace:       ds.Namespace,
+				Labels:          labelsutil.CloneAndAddLabel(ds.Spec.Template.Labels, appsv1.DefaultDaemonSetUniqueLabelKey, newHash),
+				Annotations:     ds.Annotations,
+				OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(ds, appsv1.SchemeGroupVersion.WithKind("DaemonSet"))},
+			},
+			Data:     revision.Data,
+			Revision: revision.Revision + 1,
+		}
+		nextControllerRevision, err := cs.AppsV1().ControllerRevisions(ds.Namespace).Create(context.TODO(), nextRevision, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "Failed to create ControllerRevision: %v", err)
+		framework.Logf("Created ControllerRevision: %v;hash: %v", nextControllerRevision.Name, nextControllerRevision.ObjectMeta.Labels[appsv1.DefaultDaemonSetUniqueLabelKey])
+
+		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("%s", info)
+
+		ginkgo.By("Use DeleteCollection when deleting a ControllerRevision")
+		err = cs.AppsV1().ControllerRevisions(ds.Namespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64Ptr(1)}, metav1.ListOptions{LabelSelector: labelSelector})
+		framework.ExpectNoError(err, "Failed to delete ControllerRevision: %v", err)
+
+		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
 		framework.Logf("%s", info)
 
 	})
