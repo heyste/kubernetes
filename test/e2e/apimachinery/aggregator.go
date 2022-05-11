@@ -33,12 +33,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	unstructuredv1 "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
@@ -101,6 +104,111 @@ var _ = SIGDescribe("Aggregator", func() {
 	framework.ConformanceIt("Should be able to support the 1.17 Sample API Server using the current Aggregator", func() {
 		// Testing a 1.17 version of the sample-apiserver
 		TestSampleAPIServer(f, aggrclient, imageutils.GetE2EImage(imageutils.APIServer))
+	})
+
+	ginkgo.It("should manage the lifecycle of a APIService", func() {
+		framework.Logf("Explore APIService endpoints without RBAC!")
+
+		ns := f.Namespace.Name
+		framework.Logf("ns: %v", ns)
+
+		value := "e2e-" + utilrand.String(5)
+		label := map[string]string{"e2e": value}
+		labelSelector := labels.SelectorFromSet(label).String()
+
+		apiServiceName := "v1alpha1.e2e.example.com"
+		apiServiceClient := aggrclient.ApiregistrationV1().APIServices()
+		certCtx := setupServerCert(ns, "e2e-api")
+
+		_, err := apiServiceClient.Create(context.TODO(), &apiregistrationv1.APIService{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "v1alpha1.e2e.example.com",
+				Labels: label,
+			},
+			Spec: apiregistrationv1.APIServiceSpec{
+				Service: &apiregistrationv1.ServiceReference{
+					Namespace: ns,
+					Name:      "e2e-api",
+					Port:      pointer.Int32Ptr(aggregatorServicePort),
+				},
+				Group:                "e2e.example.com",
+				Version:              "v1alpha1",
+				CABundle:             certCtx.signingCert,
+				GroupPriorityMinimum: 2000,
+				VersionPriority:      200,
+			},
+		}, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "creating apiservice %s with namespace %s", "v1alpha1.e2e.example.com", ns)
+
+		apiServiceList, err := apiServiceClient.List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+		framework.ExpectNoError(err, "failed to list API Services")
+		framework.Logf("apiServiceList: %v", apiServiceList)
+
+		// ---------------------------------------------
+
+		ginkgo.By("Checking e2e test progress")
+		info, _ := framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
+		framework.Logf("%s", info)
+
+		info, _ = framework.RunKubectl(ns, "describe", "apiservices", "v1alpha1.e2e.example.com", "-n", ns)
+		framework.Logf("%s", info)
+
+		// ---------------------------------------------
+
+		ginkgo.By("Update APIService Status")
+		var statusToUpdate, updatedStatus *apiregistrationv1.APIService
+
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			statusToUpdate, err = apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to retrieve api service %s", apiServiceName)
+
+			statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, apiregistrationv1.APIServiceCondition{
+				Type:    "StatusUpdate",
+				Status:  "True",
+				Reason:  "E2E",
+				Message: "Set from e2e test",
+			})
+
+			updatedStatus, err = apiServiceClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err, "Failed to update status. %v", err)
+		framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
+
+		// ---------------------------------------------
+
+		time.Sleep(5 * time.Second)
+
+		ginkgo.By("Checking e2e test progress")
+		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
+		framework.Logf("%s", info)
+
+		info, _ = framework.RunKubectl(ns, "describe", "apiservices", "v1alpha1.e2e.example.com", "-n", ns)
+		framework.Logf("%s", info)
+
+		// ---------------------------------------------
+
+		ginkgo.By("Delete a collection of APIServices")
+		one := int64(1)
+		err = aggrclient.ApiregistrationV1().APIServices().DeleteCollection(context.TODO(),
+			metav1.DeleteOptions{GracePeriodSeconds: &one},
+			metav1.ListOptions{LabelSelector: labelSelector})
+		framework.ExpectNoError(err, "Unable to delete apiservice %s", apiServiceName)
+		framework.Logf("APIService %s has been deleted.", apiServiceName)
+
+		// ---------------------------------------------
+
+		time.Sleep(5 * time.Second)
+
+		ginkgo.By("Checking e2e test progress")
+		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
+		framework.Logf("%s", info)
+
+		info, _ = framework.RunKubectl(ns, "describe", "apiservices", "v1alpha1.e2e.example.com", "-n", ns)
+		framework.Logf("%s", info)
+
+		// ---------------------------------------------
+
 	})
 
 })
