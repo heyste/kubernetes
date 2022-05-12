@@ -41,7 +41,6 @@ import (
 	labelsutil "k8s.io/kubernetes/pkg/util/labels"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2edaemonset "k8s.io/kubernetes/test/e2e/framework/daemonset"
-	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2eresource "k8s.io/kubernetes/test/e2e/framework/resource"
 	admissionapi "k8s.io/pod-security-admission/api"
 	"k8s.io/utils/pointer"
@@ -110,7 +109,7 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 
 		cs := f.ClientSet
 
-		ginkgo.By(fmt.Sprintf("Creating simple DaemonSet %q", dsName))
+		ginkgo.By(fmt.Sprintf("Creating DaemonSet %q", dsName))
 		testDaemonset, err := c.AppsV1().DaemonSets(ns).Create(context.TODO(), newDaemonSetWithLabel(dsName, image, label), metav1.CreateOptions{})
 		framework.ExpectNoError(err)
 
@@ -120,83 +119,50 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 		err = e2edaemonset.CheckDaemonStatus(f, dsName)
 		framework.ExpectNoError(err)
 
-		ginkgo.By("listing all DeamonSets")
+		ginkgo.By(fmt.Sprintf("Confirm DaemonSet %q successfully created with %q label", dsName, labelSelector))
 		dsList, err := cs.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "failed to list Daemon Sets")
 		framework.ExpectEqual(len(dsList.Items), 1, "filtered list wasn't found")
 
 		ds, err := c.AppsV1().DaemonSets(ns).Get(context.TODO(), dsName, metav1.GetOptions{})
 		framework.ExpectNoError(err)
-		framework.Logf("Processing ControllerRevisions for %s", ds.Name)
 
-		ginkgo.By("listing all ControllerRevisions with labelSelector")
+		ginkgo.By(fmt.Sprintf("Listing all ControllerRevisions with label %q", labelSelector))
 		revs, err := cs.AppsV1().ControllerRevisions("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "Failed to list ControllerRevision: %v", err)
 
-		// Locate all controller revisions for the current Daemon set
-		var revision *appsv1.ControllerRevision
-		var initalControllerRevision string
+		// Locate the current ControllerRevision from the list
+		var initialRevision *appsv1.ControllerRevision
 
 		for _, rev := range revs.Items {
 			for _, oref := range rev.OwnerReferences {
 				if oref.Kind == "DaemonSet" && oref.UID == ds.UID {
-					framework.Logf("revision: %v;hash: %v", rev.Name, rev.ObjectMeta.Labels[appsv1.DefaultDaemonSetUniqueLabelKey])
-					revision, err = cs.AppsV1().ControllerRevisions(ns).Get(context.TODO(), rev.Name, metav1.GetOptions{})
+					framework.Logf("Located ControllerRevision: %q", rev.Name)
+					initialRevision, err = cs.AppsV1().ControllerRevisions(ns).Get(context.TODO(), rev.Name, metav1.GetOptions{})
 					framework.ExpectNoError(err, "failed to lookup ControllerRevision: %v", err)
-					framework.ExpectNotEqual(revision, nil, "failed to lookup ControllerRevision: %v", revision)
-					initalControllerRevision = rev.Name
+					framework.ExpectNotEqual(initialRevision, nil, "failed to lookup ControllerRevision: %v", initialRevision)
 				}
 			}
 		}
 
-		info, _ := framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("%s", info)
+		ginkgo.By(fmt.Sprintf("Patching ControllerRevision %q", initialRevision.Name))
+		payload := "{\"metadata\":{\"labels\":{\"" + initialRevision.Name + "\":\"patched\"}}}"
+		patchedControllerRevision, err := f.ClientSet.AppsV1().ControllerRevisions(ns).Patch(context.TODO(), initialRevision.Name, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
+		framework.ExpectNoError(err, "failed to patch ControllerRevision %s in namespace %s", initialRevision.Name, ns)
+		framework.Logf("%s has been patched", patchedControllerRevision.Name)
 
-		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", initalControllerRevision, "-n", ns)
-		framework.Logf("%s", info)
-
-		ginkgo.By("Patching the ControllerRevision")
-		payload := "{\"metadata\":{\"labels\":{\"" + initalControllerRevision + "\":\"patched\"}}}"
-		patchedControllerRevision, err := f.ClientSet.AppsV1().ControllerRevisions(ns).Patch(context.TODO(), initalControllerRevision, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
-		framework.ExpectNoError(err, "failed to patch ControllerRevision %s in namespace %s", initalControllerRevision, ns)
-
-		framework.Logf("patchedController Revision: %#v", patchedControllerRevision)
-
-		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("%s", info)
-
-		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", initalControllerRevision, "-n", ns)
-		framework.Logf("%s", info)
-
-		// --------------------------------------------------------
-
-		ginkgo.By("Update a ControllerRevision")
+		ginkgo.By(fmt.Sprintf("Updating ControllerRevision %q", initialRevision.Name))
 		var updatedControllerRevision *appsv1.ControllerRevision
 
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			updatedControllerRevision, err = cs.AppsV1().ControllerRevisions(ns).Get(context.TODO(), initalControllerRevision, metav1.GetOptions{})
-			framework.ExpectNoError(err, "Unable to get ControllerRevision %s", initalControllerRevision)
-			// patchedJob.Spec.Suspend = pointer.BoolPtr(false)
-			if updatedControllerRevision.Annotations == nil {
-				updatedControllerRevision.Annotations = map[string]string{}
-			}
-			updatedControllerRevision.Annotations["updated"] = "true"
+			updatedControllerRevision, err = cs.AppsV1().ControllerRevisions(ns).Get(context.TODO(), patchedControllerRevision.Name, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to get ControllerRevision %s", initialRevision.Name)
+			updatedControllerRevision.Labels[initialRevision.Name] = "updated"
 			updatedControllerRevision, err = cs.AppsV1().ControllerRevisions(ns).Update(context.TODO(), updatedControllerRevision, metav1.UpdateOptions{})
-			//updatedJob, err = e2ejob.UpdateJob(f.ClientSet, ns, patchedJob)
 			return err
 		})
 		framework.ExpectNoError(err, "failed to update ControllerRevision in namespace: %s", ns)
-
-		// --------------------------------------------------------
-
-		ginkgo.By("Checking Updated ControllerRevision")
-		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("%s", info)
-
-		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", initalControllerRevision, "-n", ns)
-		framework.Logf("%s", info)
-
-		// --------------------------------------------------------
+		framework.Logf("%s has been updated", updatedControllerRevision.Name)
 
 		ginkgo.By("Create a new ControllerRevision")
 		newHash, newName := hashAndNameForDaemonSet(ds)
@@ -208,70 +174,57 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 				Annotations:     ds.Annotations,
 				OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(ds, appsv1.SchemeGroupVersion.WithKind("DaemonSet"))},
 			},
-			Data:     revision.Data,
-			Revision: revision.Revision + 1,
+			Data:     initialRevision.Data,
+			Revision: initialRevision.Revision + 1,
 		}
 		newControllerRevision, err := cs.AppsV1().ControllerRevisions(ds.Namespace).Create(context.TODO(), newRevision, metav1.CreateOptions{})
 		framework.ExpectNoError(err, "Failed to create ControllerRevision: %v", err)
-		framework.Logf("Created ControllerRevision: %v;hash: %v", newControllerRevision.Name, newControllerRevision.ObjectMeta.Labels[appsv1.DefaultDaemonSetUniqueLabelKey])
+		framework.Logf("Created ControllerRevision: %s", newControllerRevision.Name)
 
-		// info, err := framework.RunKubectl(ns, "describe", "ds", dsName, "-n", ns)
-		// framework.Logf("err: %v", err)
-		// framework.Logf("%s", info)
+		ginkgo.By("Locate ControllerRevision details...")
+		info, _ := framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		framework.Logf("%s", info)
 
-		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
+		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", newControllerRevision.Name, "-n", ns)
 		framework.Logf("%s", info)
 
 		ginkgo.By("Delete initial ControllerRevision for the current DaemonSet")
-		err = cs.AppsV1().ControllerRevisions(ds.Namespace).Delete(context.TODO(), initalControllerRevision, metav1.DeleteOptions{})
+		err = cs.AppsV1().ControllerRevisions(ds.Namespace).Delete(context.TODO(), initialRevision.Name, metav1.DeleteOptions{})
 		framework.ExpectNoError(err, "Failed to delete ControllerRevision: %v", err)
 
+		ginkgo.By("Confirm the current ControllerRevision count")
+		revs, err = cs.AppsV1().ControllerRevisions("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+		framework.ExpectNoError(err, "Failed to list ControllerRevision: %v", err)
+		framework.ExpectEqual(len(revs.Items), 1, "The current number of ControllerRevisions is not valid. Current count is %d", len(revs.Items))
+		framework.Logf("Found %d ControllerRevisions for %s", len(revs.Items), ds.Name)
+
+		ginkgo.By("Locate ControllerRevision details...")
 		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
 		framework.Logf("%s", info)
 
-		// Need to update the Daemonset before creating another ControllerRevision
-		nodeSelector := map[string]string{daemonsetColorLabel: "green"}
-		node, err := e2enode.GetRandomReadySchedulableNode(f.ClientSet)
-		framework.ExpectNoError(err)
-		greenNode, err := setDaemonSetNodeLabels(c, node.Name, nodeSelector)
-		framework.ExpectNoError(err)
-
-		ginkgo.By("Update DaemonSet node selector to green, and change its update strategy to RollingUpdate")
-		patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"nodeSelector":{"%s":"%s"}}},"updateStrategy":{"type":"RollingUpdate"}}}`,
-			daemonsetColorLabel, greenNode.Labels[daemonsetColorLabel])
+		// Generating another ControllerRevision via daemonset update
+		ginkgo.By("Change the DaemonSet to use a RollingUpdate strategy")
+		patch := "{\"spec\":{\"updateStrategy\":{\"type\":\"RollingUpdate\"}}}"
 		ds, err = c.AppsV1().DaemonSets(ns).Patch(context.TODO(), dsName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
 		framework.ExpectNoError(err, "error patching daemon set")
 
+		ginkgo.By("Locate ControllerRevision details...")
 		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
 		framework.Logf("%s", info)
 
-		ginkgo.By("Create another ControllerRevision")
-		newHash, newName = hashAndNameForDaemonSet(ds)
-		nextRevision := &appsv1.ControllerRevision{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:            newName,
-				Namespace:       ds.Namespace,
-				Labels:          labelsutil.CloneAndAddLabel(ds.Spec.Template.Labels, appsv1.DefaultDaemonSetUniqueLabelKey, newHash),
-				Annotations:     ds.Annotations,
-				OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(ds, appsv1.SchemeGroupVersion.WithKind("DaemonSet"))},
-			},
-			Data:     revision.Data,
-			Revision: revision.Revision + 1,
-		}
-		nextControllerRevision, err := cs.AppsV1().ControllerRevisions(ds.Namespace).Create(context.TODO(), nextRevision, metav1.CreateOptions{})
-		framework.ExpectNoError(err, "Failed to create ControllerRevision: %v", err)
-		framework.Logf("Created ControllerRevision: %v;hash: %v", nextControllerRevision.Name, nextControllerRevision.ObjectMeta.Labels[appsv1.DefaultDaemonSetUniqueLabelKey])
-
-		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("%s", info)
-
-		ginkgo.By("Use DeleteCollection when deleting a ControllerRevision")
-		err = cs.AppsV1().ControllerRevisions(ds.Namespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64Ptr(1)}, metav1.ListOptions{LabelSelector: labelSelector})
+		ginkgo.By("Using DeleteCollection to when deleting a ControllerRevision")
+		err = cs.AppsV1().ControllerRevisions(ns).DeleteCollection(context.TODO(), metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64Ptr(1)}, metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "Failed to delete ControllerRevision: %v", err)
 
+		ginkgo.By("Locate ControllerRevision details...")
 		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
 		framework.Logf("%s", info)
 
+		ginkgo.By("Confirm the current ControllerRevision count")
+		revs, err = cs.AppsV1().ControllerRevisions("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+		framework.ExpectNoError(err, "Failed to list ControllerRevision: %v", err)
+		framework.ExpectEqual(len(revs.Items), 1, "The current number of ControllerRevisions is not valid. Current count is %d", len(revs.Items))
+		framework.Logf("Found %d ControllerRevisions for %s", len(revs.Items), ds.Name)
 	})
 })
 
