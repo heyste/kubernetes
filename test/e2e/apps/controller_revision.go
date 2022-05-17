@@ -21,8 +21,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
-
-	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	"time"
 
 	"github.com/onsi/ginkgo"
 	appsv1 "k8s.io/api/apps/v1"
@@ -31,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/rand"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -46,12 +45,17 @@ import (
 	"k8s.io/utils/pointer"
 )
 
+const (
+	controllerRevisionRetryPeriod  = 1 * time.Second
+	controllerRevisionRetryTimeout = 1 * time.Minute
+)
+
 // This test must be run in serial because it assumes the Daemon Set pods will
 // always get scheduled.  If we run other tests in parallel, this may not
 // happen.  In the future, running in parallel may work if we have an eviction
 // model which lets the DS controller kick out other pods to make room.
 // See http://issues.k8s.io/21767 for more details
-var _ = SIGDescribe("Controller revision [Serial]", func() {
+var _ = SIGDescribe("ControllerRevision [Serial]", func() {
 	var f *framework.Framework
 
 	ginkgo.AfterEach(func() {
@@ -127,6 +131,8 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 		ds, err := c.AppsV1().DaemonSets(ns).Get(context.TODO(), dsName, metav1.GetOptions{})
 		framework.ExpectNoError(err)
 
+		dsNameLabel := "daemonset-name=" + dsName
+
 		ginkgo.By(fmt.Sprintf("Listing all ControllerRevisions with label %q", labelSelector))
 		revs, err := cs.AppsV1().ControllerRevisions("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "Failed to list ControllerRevision: %v", err)
@@ -181,13 +187,6 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 		framework.ExpectNoError(err, "Failed to create ControllerRevision: %v", err)
 		framework.Logf("Created ControllerRevision: %s", newControllerRevision.Name)
 
-		ginkgo.By("Locate ControllerRevision details...")
-		info, _ := framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("%s", info)
-
-		info, _ = framework.RunKubectl(ns, "describe", "controllerrevisions", newControllerRevision.Name, "-n", ns)
-		framework.Logf("%s", info)
-
 		ginkgo.By("Delete initial ControllerRevision for the current DaemonSet")
 		err = cs.AppsV1().ControllerRevisions(ds.Namespace).Delete(context.TODO(), initialRevision.Name, metav1.DeleteOptions{})
 		framework.ExpectNoError(err, "Failed to delete ControllerRevision: %v", err)
@@ -198,35 +197,45 @@ var _ = SIGDescribe("Controller revision [Serial]", func() {
 		framework.ExpectEqual(len(revs.Items), 1, "The current number of ControllerRevisions is not valid. Current count is %d", len(revs.Items))
 		framework.Logf("Found %d ControllerRevisions for %s", len(revs.Items), ds.Name)
 
-		ginkgo.By("Locate ControllerRevision details...")
-		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("%s", info)
-
-		// Generating another ControllerRevision via daemonset update
+		// Generating another ControllerRevision by patching the daemonset
 		ginkgo.By("Change the DaemonSet to use a RollingUpdate strategy")
-		patch := "{\"spec\":{\"updateStrategy\":{\"type\":\"RollingUpdate\"}}}"
-		ds, err = c.AppsV1().DaemonSets(ns).Patch(context.TODO(), dsName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+		patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"terminationGracePeriodSeconds": %d}}},"updateStrategy":{"type":"RollingUpdate"}}`, 1)
+
+		_, err = c.AppsV1().DaemonSets(ns).Patch(context.TODO(), dsName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
 		framework.ExpectNoError(err, "error patching daemon set")
 
-		ginkgo.By("Locate ControllerRevision details...")
-		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("%s", info)
+		ginkgo.By("Confirm that there are two ControllerRevisions")
+		err = wait.PollImmediate(controllerRevisionRetryPeriod, controllerRevisionRetryTimeout, checkControllerRevisionListQuantity(f, dsNameLabel, 2))
+		framework.ExpectNoError(err, "failed to count required ControllerRevisions")
 
-		ginkgo.By("Using DeleteCollection to when deleting a ControllerRevision")
+		ginkgo.By("Removing a ControllerRevision via 'DeleteCollection' with a labelSelector")
 		err = cs.AppsV1().ControllerRevisions(ns).DeleteCollection(context.TODO(), metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64Ptr(1)}, metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "Failed to delete ControllerRevision: %v", err)
 
-		ginkgo.By("Locate ControllerRevision details...")
-		info, _ = framework.RunKubectl(ns, "get", "controllerrevisions", "-n", ns)
-		framework.Logf("%s", info)
-
-		ginkgo.By("Confirm the current ControllerRevision count")
-		revs, err = cs.AppsV1().ControllerRevisions("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
-		framework.ExpectNoError(err, "Failed to list ControllerRevision: %v", err)
-		framework.ExpectEqual(len(revs.Items), 1, "The current number of ControllerRevisions is not valid. Current count is %d", len(revs.Items))
-		framework.Logf("Found %d ControllerRevisions for %s", len(revs.Items), ds.Name)
+		ginkgo.By("Confirm that there is only 1 ControllerRevision")
+		err = wait.PollImmediate(controllerRevisionRetryPeriod, controllerRevisionRetryTimeout, checkControllerRevisionListQuantity(f, dsNameLabel, 1))
+		framework.ExpectNoError(err, "failed to count required ControllerRevisions")
 	})
 })
+
+func checkControllerRevisionListQuantity(f *framework.Framework, label string, quantity int) func() (bool, error) {
+	return func() (bool, error) {
+		var err error
+
+		framework.Logf("Requesting list of ControllerRevisions to confirm quantity")
+
+		list, err := f.ClientSet.AppsV1().ControllerRevisions(f.Namespace.Name).List(context.TODO(), metav1.ListOptions{
+			LabelSelector: label})
+		if err != nil {
+			return false, err
+		}
+
+		if len(list.Items) != quantity {
+			return false, err
+		}
+		return true, nil
+	}
+}
 
 func hashAndNameForDaemonSet(ds *appsv1.DaemonSet) (string, string) {
 	hash := fmt.Sprint(ComputeHash(&ds.Spec.Template, ds.Status.CollisionCount))
@@ -245,5 +254,5 @@ func ComputeHash(template *v1.PodTemplateSpec, collisionCount *int32) string {
 		podTemplateSpecHasher.Write(collisionCountBytes)
 	}
 
-	return rand.SafeEncodeString(fmt.Sprint(podTemplateSpecHasher.Sum32()))
+	return utilrand.SafeEncodeString(fmt.Sprint(podTemplateSpecHasher.Sum32()))
 }
