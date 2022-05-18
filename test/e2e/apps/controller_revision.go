@@ -171,6 +171,10 @@ var _ = SIGDescribe("ControllerRevision [Serial]", func() {
 		framework.ExpectNoError(err, "Failed to create ControllerRevision: %v", err)
 		framework.Logf("Created ControllerRevision: %s", newControllerRevision.Name)
 
+		ginkgo.By("Confirm that there are two ControllerRevisions")
+		err = wait.PollImmediate(controllerRevisionRetryPeriod, controllerRevisionRetryTimeout, checkControllerRevisionListQuantity(f, dsLabelSelector, 2))
+		framework.ExpectNoError(err, "failed to count required ControllerRevisions")
+
 		ginkgo.By(fmt.Sprintf("Deleting ControllerRevision %q", initialRevision.Name))
 		err = csAppsV1.ControllerRevisions(ds.Namespace).Delete(context.TODO(), initialRevision.Name, metav1.DeleteOptions{})
 		framework.ExpectNoError(err, "Failed to delete ControllerRevision: %v", err)
