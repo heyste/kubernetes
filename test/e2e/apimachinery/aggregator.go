@@ -145,16 +145,14 @@ var _ = SIGDescribe("Aggregator", func() {
 		framework.ExpectNoError(err, "failed to list API Services")
 		framework.Logf("apiServiceList: %v", apiServiceList)
 
-		// ---------------------------------------------
-
+		ginkgo.By("---------------------------------------------")
 		ginkgo.By("Checking e2e test progress")
 		info, _ := framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
 		framework.Logf("%s", info)
 
 		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
 		framework.Logf("%s", info)
-
-		// ---------------------------------------------
+		ginkgo.By("---------------------------------------------")
 
 		ginkgo.By(fmt.Sprintf("Update status for APIService %s", apiServiceName))
 		var statusToUpdate, updatedStatus *apiregistrationv1.APIService
@@ -176,18 +174,15 @@ var _ = SIGDescribe("Aggregator", func() {
 		framework.ExpectNoError(err, "Failed to update status. %v", err)
 		framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
 
-		// ---------------------------------------------
-
 		time.Sleep(5 * time.Second)
-
+		ginkgo.By("---------------------------------------------")
 		ginkgo.By("Checking e2e test progress")
 		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
 		framework.Logf("%s", info)
 
 		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
 		framework.Logf("%s", info)
-
-		// ---------------------------------------------
+		ginkgo.By("---------------------------------------------")
 
 		ginkgo.By(fmt.Sprintf("Patching status for APIService %s", apiServiceName))
 		payload := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
@@ -197,43 +192,60 @@ var _ = SIGDescribe("Aggregator", func() {
 		framework.ExpectNoError(err, "Failed to patch status. %v", err)
 		framework.Logf("Patched status conditions: %#v", patchedApiService.Status.Conditions)
 
-		// ---------------------------------------------
-
 		time.Sleep(5 * time.Second)
-
+		ginkgo.By("---------------------------------------------")
 		ginkgo.By("Checking e2e test progress")
 		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
 		framework.Logf("%s", info)
 
 		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
 		framework.Logf("%s", info)
+		ginkgo.By("---------------------------------------------")
 
-		// ---------------------------------------------
+		ginkgo.By(fmt.Sprintf("Replace APIService %s", apiServiceName))
+		var updatedApiService *apiregistrationv1.APIService
+
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			patchedApiService, err = apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to get APIService %s", apiServiceName)
+			patchedApiService.Annotations = map[string]string{
+				"updated": "true",
+			}
+			updatedApiService, err = apiServiceClient.Update(context.TODO(), patchedApiService, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err)
+		framework.ExpectEqual(updatedApiService.Annotations["updated"], "true", "updated object should have the applied annotation")
+		framework.Logf("Found updated apiServervice annotation: %#v\n", updatedApiService.Annotations["updated"])
+
+		time.Sleep(5 * time.Second)
+		ginkgo.By("---------------------------------------------")
+		ginkgo.By("Checking e2e test progress")
+		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
+		framework.Logf("%s", info)
+
+		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
+		framework.Logf("%s", info)
+		ginkgo.By("---------------------------------------------")
 
 		ginkgo.By(fmt.Sprintf("DeleteCollection APIService %s via labelSelector: %s", apiServiceName, labelSelector))
-		ginkgo.By("Delete a collection of APIServices")
-		one := int64(1)
+
 		err = aggrclient.ApiregistrationV1().APIServices().DeleteCollection(context.TODO(),
-			metav1.DeleteOptions{GracePeriodSeconds: &one},
+			metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64(1)},
 			metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "Unable to delete apiservice %s", apiServiceName)
 		framework.Logf("APIService %s has been deleted.", apiServiceName)
 
-		// ---------------------------------------------
-
 		time.Sleep(5 * time.Second)
-
+		ginkgo.By("---------------------------------------------")
 		ginkgo.By("Checking e2e test progress")
 		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
 		framework.Logf("%s", info)
 
 		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
 		framework.Logf("%s", info)
-
-		// ---------------------------------------------
-
+		ginkgo.By("---------------------------------------------")
 	})
-
 })
 
 func cleanTest(client clientset.Interface, aggrclient *aggregatorclient.Clientset, namespace string) {
