@@ -58,6 +58,9 @@ import (
 
 const (
 	aggregatorServicePort = 7443
+
+	apiServiceRetryPeriod  = 1 * time.Second
+	apiServiceRetryTimeout = 1 * time.Minute
 )
 
 var _ = SIGDescribe("Aggregator", func() {
@@ -139,34 +142,30 @@ var _ = SIGDescribe("Aggregator", func() {
 				VersionPriority:      200,
 			},
 		}, metav1.CreateOptions{})
-		framework.ExpectNoError(err, "creating apiservice %s with namespace %s", apiServiceName, ns)
+		framework.ExpectNoError(err, "creating apiService %s, namespace %s", apiServiceName, ns)
 
-		apiServiceList, err := apiServiceClient.List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+		_, err = apiServiceClient.List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "failed to list API Services")
-		framework.Logf("apiServiceList: %v", apiServiceList)
 
-		ginkgo.By("---------------------------------------------")
-		ginkgo.By("Checking e2e test progress")
-		info, _ := framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
-		framework.Logf("%s", info)
-
-		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
-		framework.Logf("%s", info)
-		ginkgo.By("---------------------------------------------")
+		ginkgo.By("Confirm that the generated APIService has been created")
+		err = wait.PollImmediate(apiServiceRetryPeriod, apiServiceRetryTimeout, checkApiServiceListQuantity(aggrclient, labelSelector, 1))
+		framework.ExpectNoError(err, "failed to count the required APIServices")
 
 		ginkgo.By(fmt.Sprintf("Update status for APIService %s", apiServiceName))
 		var statusToUpdate, updatedStatus *apiregistrationv1.APIService
+
+		updatedStatusConditions := apiregistrationv1.APIServiceCondition{
+			Type:    "StatusUpdate",
+			Status:  "True",
+			Reason:  "E2E",
+			Message: "Set from e2e test",
+		}
 
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			statusToUpdate, err = apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
 			framework.ExpectNoError(err, "Unable to retrieve api service %s", apiServiceName)
 
-			statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, apiregistrationv1.APIServiceCondition{
-				Type:    "StatusUpdate",
-				Status:  "True",
-				Reason:  "E2E",
-				Message: "Set from e2e test",
-			})
+			statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, updatedStatusConditions)
 
 			updatedStatus, err = apiServiceClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
 			return err
@@ -174,33 +173,28 @@ var _ = SIGDescribe("Aggregator", func() {
 		framework.ExpectNoError(err, "Failed to update status. %v", err)
 		framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
 
-		time.Sleep(5 * time.Second)
-		ginkgo.By("---------------------------------------------")
-		ginkgo.By("Checking e2e test progress")
-		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
-		framework.Logf("%s", info)
-
-		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
-		framework.Logf("%s", info)
-		ginkgo.By("---------------------------------------------")
+		ginkgo.By("Confirm that the generated APIService has an updated status")
+		err = wait.PollImmediate(apiServiceRetryPeriod, apiServiceRetryTimeout, checkApiServiceStatus(aggrclient, apiServiceName, updatedStatusConditions))
+		framework.ExpectNoError(err, "failed to locate the required APIService status")
 
 		ginkgo.By(fmt.Sprintf("Patching status for APIService %s", apiServiceName))
-		payload := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
-		framework.Logf("Patch payload: %v", string(payload))
+
+		patchedStatusConditions := apiregistrationv1.APIServiceCondition{
+			Type:    "StatusPatched",
+			Status:  "True",
+			Reason:  "E2E",
+			Message: "Set from e2e test",
+		}
+
+		payload := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True","reason":"E2E","message":"Set from e2e test"}]}}`)
 
 		patchedApiService, err := apiServiceClient.Patch(context.TODO(), apiServiceName, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
 		framework.ExpectNoError(err, "Failed to patch status. %v", err)
 		framework.Logf("Patched status conditions: %#v", patchedApiService.Status.Conditions)
 
-		time.Sleep(5 * time.Second)
-		ginkgo.By("---------------------------------------------")
-		ginkgo.By("Checking e2e test progress")
-		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
-		framework.Logf("%s", info)
-
-		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
-		framework.Logf("%s", info)
-		ginkgo.By("---------------------------------------------")
+		ginkgo.By("Confirm that the generated APIService has been created")
+		err = wait.PollImmediate(apiServiceRetryPeriod, apiServiceRetryTimeout, checkApiServiceStatus(aggrclient, apiServiceName, patchedStatusConditions))
+		framework.ExpectNoError(err, "failed to locate the required APIService status")
 
 		ginkgo.By(fmt.Sprintf("Replace APIService %s", apiServiceName))
 		var updatedApiService *apiregistrationv1.APIService
@@ -208,25 +202,15 @@ var _ = SIGDescribe("Aggregator", func() {
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			patchedApiService, err = apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
 			framework.ExpectNoError(err, "Unable to get APIService %s", apiServiceName)
-			patchedApiService.Annotations = map[string]string{
-				"updated": "true",
+			patchedApiService.Labels = map[string]string{
+				apiServiceGroup: "updated",
 			}
 			updatedApiService, err = apiServiceClient.Update(context.TODO(), patchedApiService, metav1.UpdateOptions{})
 			return err
 		})
 		framework.ExpectNoError(err)
-		framework.ExpectEqual(updatedApiService.Annotations["updated"], "true", "updated object should have the applied annotation")
-		framework.Logf("Found updated apiServervice annotation: %#v\n", updatedApiService.Annotations["updated"])
-
-		time.Sleep(5 * time.Second)
-		ginkgo.By("---------------------------------------------")
-		ginkgo.By("Checking e2e test progress")
-		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
-		framework.Logf("%s", info)
-
-		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
-		framework.Logf("%s", info)
-		ginkgo.By("---------------------------------------------")
+		framework.ExpectEqual(updatedApiService.Labels[apiServiceGroup], "updated", "updated object should have the applied label")
+		framework.Logf("Found updated apiService label for %q", apiServiceName)
 
 		ginkgo.By(fmt.Sprintf("DeleteCollection APIService %s via labelSelector: %s", apiServiceName, labelSelector))
 
@@ -236,15 +220,9 @@ var _ = SIGDescribe("Aggregator", func() {
 		framework.ExpectNoError(err, "Unable to delete apiservice %s", apiServiceName)
 		framework.Logf("APIService %s has been deleted.", apiServiceName)
 
-		time.Sleep(5 * time.Second)
-		ginkgo.By("---------------------------------------------")
-		ginkgo.By("Checking e2e test progress")
-		info, _ = framework.RunKubectl(ns, "get", "apiservices", "-n", ns)
-		framework.Logf("%s", info)
-
-		info, _ = framework.RunKubectl(ns, "describe", "apiservices", apiServiceName, "-n", ns)
-		framework.Logf("%s", info)
-		ginkgo.By("---------------------------------------------")
+		ginkgo.By("Confirm that the generated APIService has been deleted")
+		err = wait.PollImmediate(apiServiceRetryPeriod, apiServiceRetryTimeout, checkApiServiceListQuantity(aggrclient, labelSelector, 0))
+		framework.ExpectNoError(err, "failed to count the required APIServices")
 	})
 })
 
@@ -712,4 +690,43 @@ func generateFlunderName(base string) string {
 		return base
 	}
 	return fmt.Sprintf("%s-%d", base, id)
+}
+
+func checkApiServiceListQuantity(aggrclient *aggregatorclient.Clientset, label string, quantity int) func() (bool, error) {
+	return func() (bool, error) {
+		var err error
+
+		framework.Logf("Requesting list of APIServices to confirm quantity")
+
+		list, err := aggrclient.ApiregistrationV1().APIServices().List(context.TODO(), metav1.ListOptions{LabelSelector: label})
+		if err != nil {
+			return false, err
+		}
+
+		if len(list.Items) != quantity {
+			return false, err
+		}
+		framework.Logf("Found %d APIService (%s)", quantity, label)
+		return true, nil
+	}
+}
+
+func checkApiServiceStatus(aggrclient *aggregatorclient.Clientset, apiServiceName string, statusConditions apiregistrationv1.APIServiceCondition) func() (bool, error) {
+	return func() (bool, error) {
+
+		framework.Logf("Get APIService %q to confirm status", apiServiceName)
+		currentApiService, err := aggrclient.ApiregistrationV1().APIServices().Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		for _, cond := range currentApiService.Status.Conditions {
+			if cond.Type == statusConditions.Type && cond.Reason == statusConditions.Reason && cond.Message == statusConditions.Message {
+				framework.Logf("APIService %q has the required status conditions", apiServiceName)
+				return true, nil
+			}
+		}
+
+		return false, err
+	}
 }
