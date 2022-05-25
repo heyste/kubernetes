@@ -109,7 +109,7 @@ var _ = SIGDescribe("Aggregator", func() {
 		TestSampleAPIServer(f, aggrclient, imageutils.GetE2EImage(imageutils.APIServer))
 	})
 
-	ginkgo.It("should manage the lifecycle of a APIService", func() {
+	ginkgo.It("should manage the lifecycle of an APIService", func() {
 
 		ns := f.Namespace.Name
 		framework.Logf("ns: %v", ns)
@@ -218,11 +218,11 @@ var _ = SIGDescribe("Aggregator", func() {
 			metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64(1)},
 			metav1.ListOptions{LabelSelector: labelSelector})
 		framework.ExpectNoError(err, "Unable to delete apiservice %s", apiServiceName)
-		framework.Logf("APIService %s has been deleted.", apiServiceName)
 
 		ginkgo.By("Confirm that the generated APIService has been deleted")
 		err = wait.PollImmediate(apiServiceRetryPeriod, apiServiceRetryTimeout, checkApiServiceListQuantity(aggrclient, labelSelector, 0))
 		framework.ExpectNoError(err, "failed to count the required APIServices")
+		framework.Logf("APIService %s has been deleted.", apiServiceName)
 	})
 })
 
@@ -706,7 +706,7 @@ func checkApiServiceListQuantity(aggrclient *aggregatorclient.Clientset, label s
 		if len(list.Items) != quantity {
 			return false, err
 		}
-		framework.Logf("Found %d APIService (%s)", quantity, label)
+		framework.Logf("Found %d APIService with label %q", quantity, label)
 		return true, nil
 	}
 }
