@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -282,4 +283,23 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		framework.ExpectEqual(namespace.ObjectMeta.Labels["testLabel"], "testValue", "namespace not patched")
 	})
 
+	ginkgo.It("should apply an update to a Namespace", func() {
+		var err error
+		var updatedNamespace *v1.Namespace
+		ns := f.Namespace.Name
+		cs := f.ClientSet
+
+		ginkgo.By(fmt.Sprintf("Updating Namespace %q", ns))
+
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			updatedNamespace, err = cs.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
+
+			framework.ExpectNoError(err, "Unable to get Namespace %s", ns)
+			updatedNamespace.Labels[ns] = "updated"
+			updatedNamespace, err = cs.CoreV1().Namespaces().Update(context.TODO(), updatedNamespace, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err, "failed to update ControllerRevision in namespace: %s", ns)
+
+	})
 })
