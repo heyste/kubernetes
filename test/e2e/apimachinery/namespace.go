@@ -300,6 +300,7 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 			return err
 		})
 		framework.ExpectNoError(err, "failed to update ControllerRevision in namespace: %s", ns)
-
+		framework.ExpectEqual(updatedNamespace.ObjectMeta.Labels[ns], "updated", "Failed to update namespace %q. Current Labels: %#v", ns, updatedNamespace.Labels)
+		framework.Logf("Namespace %q now has labels, %#v", ns, updatedNamespace.Labels)
 	})
 })
