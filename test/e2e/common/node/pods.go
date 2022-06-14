@@ -33,7 +33,6 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -53,6 +52,7 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2ewebsocket "k8s.io/kubernetes/test/e2e/framework/websocket"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	"k8s.io/utils/pointer"
 
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
@@ -1057,21 +1057,10 @@ var _ = SIGDescribe("Pods", func() {
 	})
 
 	ginkgo.It("should patch a pod status", func() {
-		one := int64(1)
 		ns := f.Namespace.Name
 		podClient := f.ClientSet.CoreV1().Pods(ns)
 		podName := "pod-" + utilrand.String(5)
 		label := map[string]string{"e2e": podName}
-		labelSelector := labels.SelectorFromSet(label).String()
-
-		w := &cache.ListWatch{
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				options.LabelSelector = labelSelector
-				return podClient.Watch(context.TODO(), options)
-			},
-		}
-		podsList, err := podClient.List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
-		framework.ExpectNoError(err, "failed to list Pods")
 
 		ginkgo.By("Create a pod")
 		testPod := v1.Pod{
@@ -1080,7 +1069,7 @@ var _ = SIGDescribe("Pods", func() {
 				Labels: label,
 			},
 			Spec: v1.PodSpec{
-				TerminationGracePeriodSeconds: &one,
+				TerminationGracePeriodSeconds: pointer.Int64(1),
 				Containers: []v1.Container{
 					{
 						Name:  "webserver",
@@ -1089,88 +1078,27 @@ var _ = SIGDescribe("Pods", func() {
 				},
 			},
 		}
-		createdPod, err := podClient.Create(context.TODO(), &testPod, metav1.CreateOptions{})
+		pod, err := podClient.Create(context.TODO(), &testPod, metav1.CreateOptions{})
 		framework.ExpectNoError(err, "failed to create Pod %v in namespace %v", testPod.ObjectMeta.Name, ns)
-
-		ginkgo.By("watching for Pod to be ready")
-		ctx, cancel := context.WithTimeout(context.Background(), f.Timeouts.PodStart)
-		defer cancel()
-		_, err = watchtools.Until(ctx, podsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
-			if pod, ok := event.Object.(*v1.Pod); ok {
-				found := pod.ObjectMeta.Name == testPod.ObjectMeta.Name &&
-					pod.ObjectMeta.Namespace == ns &&
-					pod.Labels["e2e"] == podName &&
-					pod.Status.Phase == v1.PodRunning
-				if !found {
-					framework.Logf("observed Pod %v in namespace %v in phase %v with labels: %v & conditions %v", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace, pod.Status.Phase, pod.Labels, pod.Status.Conditions)
-					return false, nil
-				}
-				framework.Logf("Found Pod %v in namespace %v in phase %v with labels: %v & conditions %v", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace, pod.Status.Phase, pod.Labels, pod.Status.Conditions)
-				return found, nil
-			}
-			framework.Logf("Observed event: %+v", event.Object)
-			return false, nil
-		})
-		if err != nil {
-			p, _ := podClient.Get(context.TODO(), podName, metav1.GetOptions{})
-			framework.Logf("Pod: %+v", p)
-		}
-		framework.ExpectNoError(err, "failed to see Pod %v in namespace %v running", testPod.ObjectMeta.Name, ns)
+		framework.ExpectNoError(e2epod.WaitForPodRunningInNamespace(f.ClientSet, pod), "Pod didn't start within time out period")
 
 		ginkgo.By("patching /status")
 		podStatus := v1.PodStatus{
+			Message: "Patched by e2e test",
 			Reason:  "E2E",
-			Message: "Set from an e2e test",
 		}
 		pStatusJSON, err := json.Marshal(podStatus)
 		framework.ExpectNoError(err, "Failed to marshal. %v", podStatus)
+		framework.Logf("podStatus:%#v", podStatus)
 
 		pStatus, err := podClient.Patch(context.TODO(), podName, types.MergePatchType,
 			[]byte(`{"metadata":{"annotations":{"patchedstatus":"true"}},"status":`+string(pStatusJSON)+`}`),
 			metav1.PatchOptions{}, "status")
 		framework.ExpectNoError(err)
-		framework.Logf("pStatus: %#v\n", pStatus.Status)
-
-		ginkgo.By("watching for the Pod status to be patched")
-		// ctx, cancel = context.WithTimeout(context.Background(), podRetryTimeout)
-		framework.Logf("f.Timeouts.PodStart: %#v\n", f.Timeouts.PodStart)
-		framework.Logf("f.Timeouts.PodStart is 5mins: %v\n", f.Timeouts.PodStart == 5*time.Minute)
-		ctx, cancel = context.WithTimeout(context.Background(), f.Timeouts.PodStart)
-
-		_, err = watchtools.Until(ctx, podsList.ResourceVersion, w, func(event watch.Event) (bool, error) {
-
-			defer cancel()
-			if e, ok := event.Object.(*v1.Pod); ok {
-				framework.Logf("e.Name: %#v e.NS: %#v  e.Labels: %#v\n", e.ObjectMeta.Name, e.ObjectMeta.Namespace, e.ObjectMeta.Labels)
-				found := e.ObjectMeta.Name == pStatus.ObjectMeta.Name &&
-					e.ObjectMeta.Namespace == pStatus.ObjectMeta.Namespace &&
-					e.ObjectMeta.Labels["e2e"] == pStatus.ObjectMeta.Labels["e2e"]
-				if !found {
-					framework.Logf("Observed Pod %v in namespace %v with annotations: %v & Conditions: %v", pStatus.ObjectMeta.Name, pStatus.ObjectMeta.Namespace, pStatus.Annotations, pStatus.Status.Conditions)
-					return false, nil
-				}
-				for _, cond := range e.Status.Conditions {
-					if cond.Reason == "E2E" {
-						framework.Logf("Found Pod %v in namespace %v with labels: %v annotations: %v & Conditions: %v", pStatus.ObjectMeta.Name, pStatus.ObjectMeta.Namespace, pStatus.ObjectMeta.Labels, pStatus.Annotations, cond)
-						return found, nil
-					}
-					framework.Logf("Observed Pod %v in namespace %v with annotations: %v & Conditions: %v", pStatus.ObjectMeta.Name, pStatus.ObjectMeta.Namespace, pStatus.Annotations, cond)
-				}
-			}
-			object := strings.Split(fmt.Sprintf("%v", event.Object), "{")[0]
-			framework.Logf("Observed %v event: %+v", object, event.Type)
-			return false, nil
-		})
-		framework.ExpectNoError(err, "failed to locate Pod %v in namespace %v", pStatus.ObjectMeta.Name, ns)
-		framework.Logf("Pod %s has an updated status", podName)
-
-		ginkgo.By("get /status")
-		pResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
-		gottenStatus, err := f.DynamicClient.Resource(pResource).Namespace(ns).Get(context.TODO(), podName, metav1.GetOptions{}, "status")
-		framework.ExpectNoError(err)
-		statusUID, _, err := unstructured.NestedFieldCopy(gottenStatus.Object, "metadata", "uid")
-		framework.ExpectNoError(err)
-		framework.ExpectEqual(string(createdPod.UID), statusUID, fmt.Sprintf("pod.UID: %v expected to match statusUID: %v ", createdPod.UID, statusUID))
+		framework.ExpectEqual(pStatus.Status.Message, "Patched by e2e test", fmt.Sprintf("Status.Message for %q was %q but expected it to be \"Patched by e2e test\"", podName, pStatus.Status.Message))
+		framework.ExpectEqual(pStatus.Status.Reason, "E2E", fmt.Sprintf("Status.Reason for %q was %q but expected it to be \"E2E\"", podName, pStatus.Status.Reason))
+		framework.Logf("patched Status message: %q", pStatus.Status.Message)
+		framework.Logf("patched Status reason: %q", pStatus.Status.Reason)
 	})
 })
 
