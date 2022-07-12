@@ -18,6 +18,7 @@ package apimachinery
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -30,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -944,8 +946,26 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		rqResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
 		gottenStatus, err := f.DynamicClient.Resource(rqResource).Namespace(ns).Get(context.TODO(), resourceQuota.Name, metav1.GetOptions{}, "status")
 		framework.ExpectNoError(err)
-		framework.Logf("gottenStatus: %#v", gottenStatus)
+		framework.Logf("ResourceQuota %q status: %#v", rqName, gottenStatus)
 
+		ginkgo.By("patching /status")
+
+		rqStatus := v1.ResourceQuotaStatus{
+			Hard: v1.ResourceList{
+				v1.ResourceCPU: resource.MustParse("800m"),
+			},
+		}
+		rqStatusJSON, err := json.Marshal(rqStatus)
+		framework.ExpectNoError(err)
+
+		patchedStatus, err := client.CoreV1().ResourceQuotas(ns).Patch(context.TODO(), rqName, types.MergePatchType,
+			[]byte(`{"metadata":{"annotations":{"rq-patched-status":"true"}},"status":`+string(rqStatusJSON)+`}`),
+			metav1.PatchOptions{}, "status")
+
+		framework.ExpectNoError(err)
+		framework.ExpectEqual(patchedStatus.Annotations["rq-patched-status"], "true", "Did not find the annotation for this ResourceQuota. Current annotations: %v", patchedStatus.Annotations)
+		framework.ExpectEqual(*patchedStatus.Status.Hard.Cpu(), resource.MustParse("800m"), "Hard cpu value for ResourceQuota %q is %s not 800Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Spec.Hard.Cpu().String())
+		framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, patchedStatus.Status.Hard.Cpu())
 	})
 
 })
