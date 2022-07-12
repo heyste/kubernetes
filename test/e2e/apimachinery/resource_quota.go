@@ -36,6 +36,7 @@ import (
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/pkg/quota/v1/evaluator/core"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/utils/crd"
@@ -921,8 +922,9 @@ var _ = SIGDescribe("ResourceQuota", func() {
 	})
 
 	ginkgo.It("should apply changes to a resourcequota status", func() {
-		client := f.ClientSet
+
 		ns := f.Namespace.Name
+		rqClient := f.ClientSet.CoreV1().ResourceQuotas(ns)
 
 		rqName := "e2e-quotastatus-" + utilrand.String(5)
 		label := map[string]string{"e2e-rq-label": rqName}
@@ -934,12 +936,13 @@ var _ = SIGDescribe("ResourceQuota", func() {
 				Labels: label,
 			},
 			Spec: v1.ResourceQuotaSpec{
-				Hard: v1.ResourceList{},
+				Hard: v1.ResourceList{
+					v1.ResourceCPU:    resource.MustParse("500m"),
+					v1.ResourceMemory: resource.MustParse("500Mi"),
+				},
 			},
 		}
-		resourceQuota.Spec.Hard[v1.ResourceCPU] = resource.MustParse("1")
-		resourceQuota.Spec.Hard[v1.ResourceMemory] = resource.MustParse("500Mi")
-		_, err := createResourceQuota(client, ns, resourceQuota)
+		_, err := createResourceQuota(f.ClientSet, ns, resourceQuota)
 		framework.ExpectNoError(err)
 
 		ginkgo.By("get /status")
@@ -947,6 +950,8 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		gottenStatus, err := f.DynamicClient.Resource(rqResource).Namespace(ns).Get(context.TODO(), resourceQuota.Name, metav1.GetOptions{}, "status")
 		framework.ExpectNoError(err)
 		framework.Logf("ResourceQuota %q status: %#v", rqName, gottenStatus)
+		// framework.ExpectEqual(*gottenStatus.Status.Hard.Cpu(), resource.MustParse("800m"), "Hard cpu value for ResourceQuota %q is %s not 800Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Spec.Hard.Cpu().String())
+		// framework.ExpectEqual(*gottenStatus.Status.Hard.Memory(), resource.MustParse("750Mi"), "Hard memory value for ResourceQuota %q is %s not 750Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Spec.Hard.Cpu().String())
 
 		ginkgo.By("patching /status")
 
@@ -958,7 +963,7 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		rqStatusJSON, err := json.Marshal(rqStatus)
 		framework.ExpectNoError(err)
 
-		patchedStatus, err := client.CoreV1().ResourceQuotas(ns).Patch(context.TODO(), rqName, types.MergePatchType,
+		patchedStatus, err := rqClient.Patch(context.TODO(), rqName, types.MergePatchType,
 			[]byte(`{"metadata":{"annotations":{"rq-patched-status":"true"}},"status":`+string(rqStatusJSON)+`}`),
 			metav1.PatchOptions{}, "status")
 
@@ -966,6 +971,27 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		framework.ExpectEqual(patchedStatus.Annotations["rq-patched-status"], "true", "Did not find the annotation for this ResourceQuota. Current annotations: %v", patchedStatus.Annotations)
 		framework.ExpectEqual(*patchedStatus.Status.Hard.Cpu(), resource.MustParse("800m"), "Hard cpu value for ResourceQuota %q is %s not 800Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Spec.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, patchedStatus.Status.Hard.Cpu())
+
+		ginkgo.By("updating /status")
+
+		var statusToUpdate, updatedStatus *v1.ResourceQuota
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			statusToUpdate, err = rqClient.Get(context.TODO(), rqName, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+
+			statusToUpdate.Status.Hard = v1.ResourceList{
+				v1.ResourceMemory: resource.MustParse("750Mi"),
+			}
+			updatedStatus, err = rqClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err)
+		framework.Logf("updatedStatus: %#v", updatedStatus.Status)
+
+		framework.ExpectEqual(*updatedStatus.Status.Hard.Memory(), resource.MustParse("750Mi"), "Hard memory value for ResourceQuota %q is %s not 750Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Spec.Hard.Cpu().String())
+		framework.Logf("Resource quota %q reports a hard memory status of %s", rqName, updatedStatus.Status.Hard.Memory())
 	})
 
 })
