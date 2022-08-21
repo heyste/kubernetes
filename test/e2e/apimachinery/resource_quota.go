@@ -947,6 +947,13 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		_, err := createResourceQuota(f.ClientSet, ns, resourceQuota)
 		framework.ExpectNoError(err)
 
+		initialResourceQuota, err := f.ClientSet.CoreV1().ResourceQuotas(ns).Get(context.TODO(), rqName, metav1.GetOptions{})
+		framework.ExpectNoError(err)
+		framework.ExpectEqual(*initialResourceQuota.Spec.Hard.Cpu(), resource.MustParse("500m"), "Hard cpu value for ResourceQuota %q is %s not 500m.", initialResourceQuota.ObjectMeta.Name, initialResourceQuota.Spec.Hard.Cpu().String())
+		framework.Logf("Resource quota %q reports a hard cpu limit of %s", rqName, initialResourceQuota.Spec.Hard.Cpu())
+		framework.ExpectEqual(*initialResourceQuota.Spec.Hard.Memory(), resource.MustParse("500Mi"), "Hard memory value for ResourceQuota %q is %s not 500Mi.", initialResourceQuota.ObjectMeta.Name, initialResourceQuota.Spec.Hard.Cpu().String())
+		framework.Logf("Resource quota %q reports a hard memory limit of %s", rqName, initialResourceQuota.Spec.Hard.Memory())
+
 		ginkgo.By("patching /status")
 
 		rqStatus := v1.ResourceQuotaStatus{
@@ -963,7 +970,7 @@ var _ = SIGDescribe("ResourceQuota", func() {
 
 		framework.ExpectNoError(err)
 		framework.ExpectEqual(patchedStatus.Annotations["rq-patched-status"], "true", "Did not find the annotation for this ResourceQuota. Current annotations: %v", patchedStatus.Annotations)
-		framework.ExpectEqual(*patchedStatus.Status.Hard.Cpu(), resource.MustParse("750m"), "Hard cpu value for ResourceQuota %q is %s not 750Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Spec.Hard.Cpu().String())
+		framework.ExpectEqual(*patchedStatus.Status.Hard.Cpu(), resource.MustParse("750m"), "Hard cpu value for ResourceQuota %q is %s not 750Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Status.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, patchedStatus.Status.Hard.Cpu())
 
 		ginkgo.By("updating /status")
@@ -984,9 +991,9 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		})
 		framework.ExpectNoError(err)
 
-		framework.ExpectEqual(*updatedStatus.Status.Hard.Cpu(), resource.MustParse("1500m"), "Hard cpu value for ResourceQuota %q is %s not 1500Mi.", updatedStatus.ObjectMeta.Name, updatedStatus.Spec.Hard.Cpu().String())
+		framework.ExpectEqual(*updatedStatus.Status.Hard.Cpu(), resource.MustParse("1500m"), "Hard cpu value for ResourceQuota %q is %s not 1500Mi.", updatedStatus.ObjectMeta.Name, updatedStatus.Status.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, updatedStatus.Status.Hard.Cpu())
-		framework.ExpectEqual(*updatedStatus.Status.Hard.Memory(), resource.MustParse("1000Mi"), "Hard memory value for ResourceQuota %q is %s not 1000Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Spec.Hard.Cpu().String())
+		framework.ExpectEqual(*updatedStatus.Status.Hard.Memory(), resource.MustParse("1000Mi"), "Hard memory value for ResourceQuota %q is %s not 1000Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Status.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports a hard memory status of %s", rqName, updatedStatus.Status.Hard.Memory())
 
 		ginkgo.By("get /status")
