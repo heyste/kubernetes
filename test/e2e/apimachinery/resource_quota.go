@@ -18,7 +18,6 @@ package apimachinery
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -26,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
+	quota "k8s.io/apiserver/pkg/quota/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	clientscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/util/retry"
@@ -1018,47 +1019,40 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		framework.ExpectEqual(*initialResourceQuota.Spec.Hard.Memory(), resource.MustParse("500Mi"), "Hard memory value for ResourceQuota %q is %s not 500Mi.", initialResourceQuota.ObjectMeta.Name, initialResourceQuota.Spec.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports a hard memory limit of %s", rqName, initialResourceQuota.Spec.Hard.Memory())
 
-		ginkgo.By("patching /status")
-
-		rqStatus := v1.ResourceQuotaStatus{
-			Hard: v1.ResourceList{
-				v1.ResourceCPU: resource.MustParse("750m"),
-			},
-		}
-		rqStatusJSON, err := json.Marshal(rqStatus)
-		framework.ExpectNoError(err)
-
-		patchedStatus, err := rqClient.Patch(context.TODO(), rqName, types.MergePatchType,
-			[]byte(`{"metadata":{"annotations":{"rq-patched-status":"true"}},"status":`+string(rqStatusJSON)+`}`),
-			metav1.PatchOptions{}, "status")
-
-		framework.ExpectNoError(err)
-		framework.ExpectEqual(patchedStatus.Annotations["rq-patched-status"], "true", "Did not find the annotation for this ResourceQuota. Current annotations: %v", patchedStatus.Annotations)
-		framework.ExpectEqual(*patchedStatus.Status.Hard.Cpu(), resource.MustParse("750m"), "Hard cpu value for ResourceQuota %q is %s not 750Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Status.Hard.Cpu().String())
-		framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, patchedStatus.Status.Hard.Cpu())
-
 		ginkgo.By("updating /status")
 
-		var statusToUpdate, updatedStatus *v1.ResourceQuota
-		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			statusToUpdate, err = rqClient.Get(context.TODO(), rqName, metav1.GetOptions{})
-			if err != nil {
+		statusLimitsDirty := !apiequality.Semantic.DeepEqual(initialResourceQuota.Spec.Hard, initialResourceQuota.Status.Hard)
+		framework.Logf("statusLimitsDirty: %#v", statusLimitsDirty)
+		hardLimits := quota.Add(v1.ResourceList{}, initialResourceQuota.Spec.Hard)
+		framework.Logf("hardLimits: %#v", hardLimits)
+
+		var updatedResourceQuota *v1.ResourceQuota
+
+		if statusLimitsDirty {
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				updateStatus, err := rqClient.Get(context.TODO(), rqName, metav1.GetOptions{})
+				framework.ExpectNoError(err, "Unable to get ResourceQuota %q", rqName)
+				updateStatus.Status = v1.ResourceQuotaStatus{
+					Hard: hardLimits,
+				}
+				updatedResourceQuota, err = rqClient.UpdateStatus(context.TODO(), updateStatus, metav1.UpdateOptions{})
 				return err
-			}
+			})
 
-			statusToUpdate.Status.Hard = v1.ResourceList{
-				v1.ResourceCPU:    resource.MustParse("1500m"),
-				v1.ResourceMemory: resource.MustParse("1000Mi"),
-			}
-			updatedStatus, err = rqClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
-			return err
-		})
-		framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "Failed to update resourceQuota")
 
-		framework.ExpectEqual(*updatedStatus.Status.Hard.Cpu(), resource.MustParse("1500m"), "Hard cpu value for ResourceQuota %q is %s not 1500Mi.", updatedStatus.ObjectMeta.Name, updatedStatus.Status.Hard.Cpu().String())
-		framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, updatedStatus.Status.Hard.Cpu())
-		framework.ExpectEqual(*updatedStatus.Status.Hard.Memory(), resource.MustParse("1000Mi"), "Hard memory value for ResourceQuota %q is %s not 1000Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Status.Hard.Cpu().String())
-		framework.Logf("Resource quota %q reports a hard memory status of %s", rqName, updatedStatus.Status.Hard.Memory())
+			framework.ExpectEqual(*updatedResourceQuota.Status.Hard.Cpu(), resource.MustParse("500m"), "Hard cpu value for ResourceQuota %q is %s not 500Mi.", updatedResourceQuota.ObjectMeta.Name, updatedResourceQuota.Status.Hard.Cpu().String())
+			framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, updatedResourceQuota.Status.Hard.Cpu())
+			framework.ExpectEqual(*updatedResourceQuota.Status.Hard.Memory(), resource.MustParse("500Mi"), "Hard memory value for ResourceQuota %q is %s not 500Mi.", updatedResourceQuota.ObjectMeta.Name, updatedResourceQuota.Status.Hard.Cpu().String())
+			framework.Logf("Resource quota %q reports a hard memory status of %s", rqName, updatedResourceQuota.Status.Hard.Memory())
+
+			framework.Logf("Updated the status for initialResourceQuota")
+		} else {
+			framework.Logf("Didn't see a difference between the spec and status. ResourceQuota controller may have already updated it.")
+		}
+
+		statusLimitsDirty = !apiequality.Semantic.DeepEqual(updatedResourceQuota.Spec.Hard, updatedResourceQuota.Status.Hard)
+		framework.Logf("statusLimitsDirty: %#v", statusLimitsDirty)
 
 		ginkgo.By("get /status")
 		rqResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
@@ -1068,10 +1062,31 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		rq, err := unstructuredToResourceQuota(unstruct)
 		framework.ExpectNoError(err, "Getting the status of the resource quota %q", rq.ObjectMeta.Name)
 
-		framework.ExpectEqual(*rq.Status.Hard.Cpu(), resource.MustParse("1500m"), "Hard cpu value for ResourceQuota %q is %s not 1500Mi.", rq.ObjectMeta.Name, rq.Spec.Hard.Cpu().String())
+		framework.ExpectEqual(*rq.Status.Hard.Cpu(), resource.MustParse("500m"), "Hard cpu value for ResourceQuota %q is %s not 500Mi.", rq.ObjectMeta.Name, rq.Status.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, rq.Status.Hard.Cpu())
-		framework.ExpectEqual(*rq.Status.Hard.Memory(), resource.MustParse("1000Mi"), "Hard memory value for ResourceQuota %q is %s not 1000Mi.", rq.ObjectMeta.Name, rq.Spec.Hard.Cpu().String())
+		framework.ExpectEqual(*rq.Status.Hard.Memory(), resource.MustParse("500Mi"), "Hard memory value for ResourceQuota %q is %s not 500Mi.", rq.ObjectMeta.Name, rq.Status.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports a hard memory status of %s", rqName, rq.Status.Hard.Memory())
+
+		// ginkgo.By("patching /status")
+
+		// rqStatus := v1.ResourceQuotaStatus{
+		// 	Hard: v1.ResourceList{
+		// 		v1.ResourceCPU:    resource.MustParse("500m"),
+		// 		v1.ResourceMemory: resource.MustParse("500Mi"),
+		// 	},
+		// }
+		// rqStatusJSON, err := json.Marshal(rqStatus)
+		// framework.ExpectNoError(err)
+
+		// patchedStatus, err := rqClient.Patch(context.TODO(), rqName, types.MergePatchType,
+		// 	[]byte(`{"metadata":{"annotations":{"rq-patched-status":"true"}},"status":`+string(rqStatusJSON)+`}`),
+		// 	metav1.PatchOptions{}, "status")
+
+		// framework.ExpectNoError(err)
+		// framework.ExpectEqual(patchedStatus.Annotations["rq-patched-status"], "true", "Did not find the annotation for this ResourceQuota. Current annotations: %v", patchedStatus.Annotations)
+		// framework.ExpectEqual(*patchedStatus.Status.Hard.Cpu(), resource.MustParse("500m"), "Hard cpu value for ResourceQuota %q is %s not 750Mi.", patchedStatus.ObjectMeta.Name, patchedStatus.Status.Hard.Cpu().String())
+		// framework.Logf("Resource quota %q reports a hard cpu status of %s", rqName, patchedStatus.Status.Hard.Cpu())
+
 	})
 })
 
