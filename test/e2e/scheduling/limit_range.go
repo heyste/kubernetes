@@ -222,6 +222,20 @@ var _ = SIGDescribe("LimitRange", func() {
 		framework.ExpectNoError(err)
 	})
 
+	ginkgo.It("kb239", func() {
+		ginkgo.By("Testing KB239 endpoints...")
+
+		ginkgo.By("List LimitRange for all namespaces")
+
+		listAllLimitRanges, err := f.ClientSet.CoreV1().LimitRanges(f.Namespace.Name).List(context.TODO(), metav1.ListOptions{})
+		framework.ExpectNoError(err, "failed to query for limitRanges")
+		framework.Logf("listAllLimitRanges: %#v", listAllLimitRanges)
+
+		ginkgo.By("TODO:Patch a LimitRange")
+
+		ginkgo.By("TODO: DeleteCollection a LimitRange")
+
+	})
 })
 
 func equalResourceRequirement(expected v1.ResourceRequirements, actual v1.ResourceRequirements) error {
