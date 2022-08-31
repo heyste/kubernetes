@@ -993,8 +993,7 @@ var _ = SIGDescribe("ResourceQuota", func() {
 
 		ns := f.Namespace.Name
 		rqClient := f.ClientSet.CoreV1().ResourceQuotas(ns)
-
-		rqName := "e2e-quotastatus-" + utilrand.String(5)
+		rqName := "e2e-rq-status-" + utilrand.String(5)
 		label := map[string]string{"e2e-rq-label": rqName}
 
 		ginkgo.By("Creating a ResourceQuota")
@@ -1020,13 +1019,8 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		framework.ExpectEqual(*initialResourceQuota.Spec.Hard.Memory(), resource.MustParse("500Mi"), "Hard memory value for ResourceQuota %q is %s not 500Mi.", initialResourceQuota.ObjectMeta.Name, initialResourceQuota.Spec.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports spec: hard memory limit of %s", rqName, initialResourceQuota.Spec.Hard.Memory())
 
-		ginkgo.By("updating /status")
-
-		statusLimitsDirty := !apiequality.Semantic.DeepEqual(initialResourceQuota.Spec.Hard, initialResourceQuota.Status.Hard)
-		framework.Logf("statusLimitsDirty: %#v", statusLimitsDirty)
-
+		ginkgo.By(fmt.Sprintf("Updating %q /status", rqName))
 		var updatedResourceQuota *v1.ResourceQuota
-
 		hardLimits := quota.Add(v1.ResourceList{}, initialResourceQuota.Spec.Hard)
 
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -1038,36 +1032,31 @@ var _ = SIGDescribe("ResourceQuota", func() {
 			updatedResourceQuota, err = rqClient.UpdateStatus(context.TODO(), updateStatus, metav1.UpdateOptions{})
 			return err
 		})
-
 		framework.ExpectNoError(err, "Failed to update resourceQuota")
 
 		err = wait.PollImmediate(1*time.Second, 30*time.Second, checkResourceQuotaStatus(f, *updatedResourceQuota, hardLimits))
 		framework.ExpectNoError(err, "failed to locate the required values ResourceQuota status")
 
-		ginkgo.By("Patching spec values for hard cpu/memory")
-
+		ginkgo.By("Patching hard spec values for cpu & memory")
 		xResourceQuota, err := rqClient.Patch(context.TODO(), updatedResourceQuota.Name, types.StrategicMergePatchType,
 			[]byte(`{"spec":{"hard":{"cpu":"1","memory":"1Gi"}}}`),
 			metav1.PatchOptions{})
 		framework.ExpectNoError(err, "Could not patch resourcequota %q. Error: %v", xResourceQuota.Name, err)
 
-		ginkgo.By("patching /status")
-
+		ginkgo.By(fmt.Sprintf("Patching %q /status", rqName))
 		hardLimits = quota.Add(v1.ResourceList{}, xResourceQuota.Spec.Hard)
 
 		rqStatusJSON, err := json.Marshal(hardLimits)
 		framework.ExpectNoError(err)
-
 		patchedResourceQuota, err := rqClient.Patch(context.TODO(), rqName, types.StrategicMergePatchType,
 			[]byte(`{"status":`+string(rqStatusJSON)+`}`),
 			metav1.PatchOptions{}, "status")
-
 		framework.ExpectNoError(err)
 
 		err = wait.PollImmediate(1*time.Second, 30*time.Second, checkResourceQuotaStatus(f, *patchedResourceQuota, hardLimits))
 		framework.ExpectNoError(err, "failed to locate the required values ResourceQuota status")
 
-		ginkgo.By("get /status")
+		ginkgo.By(fmt.Sprintf("Get %q /status", rqName))
 		rqResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
 		unstruct, err := f.DynamicClient.Resource(rqResource).Namespace(ns).Get(context.TODO(), resourceQuota.Name, metav1.GetOptions{}, "status")
 		framework.ExpectNoError(err)
@@ -1079,7 +1068,6 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		framework.Logf("Resourcequota %q reports status: hard cpu of %s", rqName, rq.Status.Hard.Cpu())
 		framework.ExpectEqual(*rq.Status.Hard.Memory(), resource.MustParse("1Gi"), "Hard memory value for ResourceQuota %q is %s not 1Gi.", rq.ObjectMeta.Name, rq.Status.Hard.Cpu().String())
 		framework.Logf("Resourcequota %q reports status: hard memory of %s", rqName, rq.Status.Hard.Memory())
-
 	})
 })
 
@@ -2049,7 +2037,7 @@ func updateResourceQuotaUntilUsageAppears(c clientset.Interface, ns, quotaName s
 
 func checkResourceQuotaStatus(f *framework.Framework, currentResourceQuota v1.ResourceQuota, hardLimits v1.ResourceList) func() (bool, error) {
 	return func() (bool, error) {
-		framework.Logf("Confirming ResourceQuota %q status matches spec", currentResourceQuota.Name)
+		framework.Logf("Checking that ResourceQuota %q status matches spec", currentResourceQuota.Name)
 		rqResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
 		unstruct, err := f.DynamicClient.Resource(rqResource).Namespace(f.Namespace.Name).Get(context.TODO(), currentResourceQuota.Name, metav1.GetOptions{}, "status")
 		if err != nil {
@@ -2062,12 +2050,11 @@ func checkResourceQuotaStatus(f *framework.Framework, currentResourceQuota v1.Re
 
 		statusLimitsDirty := !apiequality.Semantic.DeepEqual(rq.Spec.Hard, rq.Status.Hard)
 		if statusLimitsDirty {
-
-			framework.Logf("[Poll again] statusLimitsDirty: %#v", statusLimitsDirty)
+			framework.Logf("Status hard settings are not in sync with spec settings")
 			return false, nil
 		}
 
-		framework.Logf("[In sync] statusLimitsDirty: %#v", statusLimitsDirty)
+		framework.Logf("Status hard settings are in sync with spec settings")
 		return true, nil
 	}
 }
