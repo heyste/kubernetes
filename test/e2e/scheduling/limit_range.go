@@ -264,18 +264,15 @@ var _ = SIGDescribe("LimitRange", func() {
 		ginkgo.By(fmt.Sprintf("Creating LimitRange %q", lrName))
 		limitRange, err := lrClient.Create(context.TODO(), limitRange, metav1.CreateOptions{})
 		framework.ExpectNoError(err)
-		framework.Logf("limitRange.Name: %#v", limitRange.Name)
-		framework.Logf("limitRange.Labels: %#v", limitRange.Labels)
 
 		// Listing across all namespaces to verify api endpoint: listCoreV1LimitRangeForAllNamespaces
 		ginkgo.By(fmt.Sprintf("Listing all LimitRanges with label %q", lrLabelSelector))
-		list, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{LabelSelector: lrLabelSelector})
+		limitRangeList, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{LabelSelector: lrLabelSelector})
 		framework.ExpectNoError(err, "Failed to list limitRanges: %v", err)
-		framework.ExpectEqual(len(list.Items), 1, "Failed to find any limitRanges")
+		framework.ExpectEqual(len(limitRangeList.Items), 1, "Failed to find any limitRanges")
 
-		lr := list.Items[0]
-		framework.Logf("lr.obj.Labels: %#v", lr.ObjectMeta.Labels)
-		framework.Logf("lr.spec: %#v", lr.Spec)
+		limitRangeItem := limitRangeList.Items[0]
+		framework.Logf("Found limitRange %q in namespace %q", limitRangeItem.ObjectMeta.Name, limitRangeItem.ObjectMeta.Namespace)
 
 		ginkgo.By(fmt.Sprintf("Patching LimitRange %q", lrName))
 		newMin := getResourceList("9m", "49Mi", "49Gi")
@@ -284,7 +281,8 @@ var _ = SIGDescribe("LimitRange", func() {
 		payload := "{\"metadata\":{\"labels\":{\"" + lrName + "\":\"patched\"}}}"
 		limitRange, err = lrClient.Patch(context.TODO(), lrName, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
 		framework.ExpectNoError(err)
-		framework.Logf("limitRange.obj.Labels: %#v", limitRange.ObjectMeta.Labels)
+		framework.ExpectEqual(limitRange.Labels[lrName], "patched", "Did not find 'patched' label for this limitRange. Current labels: %v", limitRange.Labels)
+		framework.Logf("LimitRange %q has been patched", lrName)
 
 		ginkgo.By(fmt.Sprintf("Delete LimitRange %q by Collection with labelSelector: %q", lrName, patchedLabelSelector))
 		err = lrClient.DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: patchedLabelSelector})
