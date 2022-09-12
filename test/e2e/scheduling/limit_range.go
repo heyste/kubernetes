@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
@@ -222,19 +223,71 @@ var _ = SIGDescribe("LimitRange", func() {
 		framework.ExpectNoError(err)
 	})
 
-	ginkgo.It("kb239", func() {
-		ginkgo.By("Testing KB239 endpoints...")
+	ginkgo.It("should ensure that a limitRange can listed, patched and deleted by collection", func() {
 
-		ginkgo.By("List LimitRange for all namespaces")
+		lrClient := f.ClientSet.CoreV1().LimitRanges(f.Namespace.Name)
+		lrName := "e2e-limitrange-" + utilrand.String(5)
+		e2eLabel := map[string]string{lrName: "patched"}
+		lrLabelSelector := labels.SelectorFromSet(e2eLabel).String()
+		limitRangeLabelSelector := labels.SelectorFromSet(e2eLabel).String()
 
-		listAllLimitRanges, err := f.ClientSet.CoreV1().LimitRanges(f.Namespace.Name).List(context.TODO(), metav1.ListOptions{})
-		framework.ExpectNoError(err, "failed to query for limitRanges")
-		framework.Logf("listAllLimitRanges: %#v", listAllLimitRanges)
+		min := getResourceList("50m", "100Mi", "100Gi")
+		max := getResourceList("500m", "500Mi", "500Gi")
+		defaultLimit := getResourceList("500m", "500Mi", "500Gi")
+		defaultRequest := getResourceList("100m", "200Mi", "200Gi")
+		maxLimitRequestRatio := v1.ResourceList{}
+		value := strconv.Itoa(time.Now().Nanosecond()) + string(uuid.NewUUID())
+
+		limitRange := &v1.LimitRange{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: lrName,
+				Labels: map[string]string{
+					"time": value,
+					lrName: e2eLabel[lrName],
+				},
+			},
+			Spec: v1.LimitRangeSpec{
+				Limits: []v1.LimitRangeItem{
+					{
+						Type:                 v1.LimitTypeContainer,
+						Min:                  min,
+						Max:                  max,
+						Default:              defaultLimit,
+						DefaultRequest:       defaultRequest,
+						MaxLimitRequestRatio: maxLimitRequestRatio,
+					},
+				},
+			},
+		}
+
+		ginkgo.By(fmt.Sprintf("Creating LimitRange %q", lrName))
+		limitRange, err := lrClient.Create(context.TODO(), limitRange, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		framework.Logf("limitRange.Name: %#v", limitRange.Name)
+		framework.Logf("limitRange.Labels: %#v", limitRange.Labels)
+
+		// Listing across all namespaces to verify api endpoint: listCoreV1LimitRangeForAllNamespaces
+		ginkgo.By(fmt.Sprintf("Listing all LimitRanges with label %q", lrLabelSelector))
+		revs, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{})
+		framework.ExpectNoError(err, "Failed to list limitRanges: %v", err)
+		framework.ExpectEqual(len(revs.Items), 1, "Failed to find any limitRanges")
+
+		lr := revs.Items[0]
+		framework.Logf("lr.obj.Labels: %#v", lr.ObjectMeta.Labels)
+		framework.Logf("lr.spec: %#v", lr.Spec)
 
 		ginkgo.By("TODO:Patch a LimitRange")
+		time.Sleep(5 * time.Second)
 
-		ginkgo.By("TODO: DeleteCollection a LimitRange")
+		ginkgo.By(fmt.Sprintf("Delete LimitRange %q by Collection with labelSelector: %q", lrName, limitRangeLabelSelector))
+		err = lrClient.DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: limitRangeLabelSelector})
+		framework.ExpectNoError(err, "failed to delete the LimitRange by Collection")
 
+		ginkgo.By(fmt.Sprintf("Confirm that the limitRange %q has been deleted", lrName))
+		patchedLabelSelector := lrName + "=patched"
+		err = wait.PollImmediate(1*time.Second, 10*time.Second, checkLimitRangeListQuantity(f, patchedLabelSelector, 0))
+		framework.ExpectNoError(err, "failed to count the required limitRanges")
+		framework.Logf("LimitRange %q has been deleted.", lrName)
 	})
 })
 
@@ -322,5 +375,24 @@ func newTestPod(name string, requests v1.ResourceList, limits v1.ResourceList) *
 				},
 			},
 		},
+	}
+}
+
+func checkLimitRangeListQuantity(f *framework.Framework, label string, quantity int) func() (bool, error) {
+	return func() (bool, error) {
+		var err error
+
+		framework.Logf("Requesting list of LimitRange to confirm quantity")
+
+		list, err := f.ClientSet.CoreV1().LimitRanges(f.Namespace.Name).List(context.TODO(), metav1.ListOptions{LabelSelector: label})
+		if err != nil {
+			return false, err
+		}
+
+		if len(list.Items) != quantity {
+			return false, err
+		}
+		framework.Logf("Found %d LimitRange with label %q", quantity, label)
+		return true, nil
 	}
 }
