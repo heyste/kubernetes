@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -223,13 +224,13 @@ var _ = SIGDescribe("LimitRange", func() {
 		framework.ExpectNoError(err)
 	})
 
-	ginkgo.It("should ensure that a limitRange can listed, patched and deleted by collection", func() {
+	ginkgo.It("should ensure that a limitRange can be listed, patched and deleted by collection", func() {
 
 		lrClient := f.ClientSet.CoreV1().LimitRanges(f.Namespace.Name)
 		lrName := "e2e-limitrange-" + utilrand.String(5)
-		e2eLabel := map[string]string{lrName: "patched"}
+		e2eLabel := map[string]string{lrName: "created"}
 		lrLabelSelector := labels.SelectorFromSet(e2eLabel).String()
-		limitRangeLabelSelector := labels.SelectorFromSet(e2eLabel).String()
+		patchedLabelSelector := lrName + "=patched"
 
 		min := getResourceList("50m", "100Mi", "100Gi")
 		max := getResourceList("500m", "500Mi", "500Gi")
@@ -268,23 +269,28 @@ var _ = SIGDescribe("LimitRange", func() {
 
 		// Listing across all namespaces to verify api endpoint: listCoreV1LimitRangeForAllNamespaces
 		ginkgo.By(fmt.Sprintf("Listing all LimitRanges with label %q", lrLabelSelector))
-		revs, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{})
+		list, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{LabelSelector: lrLabelSelector})
 		framework.ExpectNoError(err, "Failed to list limitRanges: %v", err)
-		framework.ExpectEqual(len(revs.Items), 1, "Failed to find any limitRanges")
+		framework.ExpectEqual(len(list.Items), 1, "Failed to find any limitRanges")
 
-		lr := revs.Items[0]
+		lr := list.Items[0]
 		framework.Logf("lr.obj.Labels: %#v", lr.ObjectMeta.Labels)
 		framework.Logf("lr.spec: %#v", lr.Spec)
 
-		ginkgo.By("TODO:Patch a LimitRange")
-		time.Sleep(5 * time.Second)
+		ginkgo.By(fmt.Sprintf("Patching LimitRange %q", lrName))
+		newMin := getResourceList("9m", "49Mi", "49Gi")
+		limitRange.Spec.Limits[0].Min = newMin
 
-		ginkgo.By(fmt.Sprintf("Delete LimitRange %q by Collection with labelSelector: %q", lrName, limitRangeLabelSelector))
-		err = lrClient.DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: limitRangeLabelSelector})
+		payload := "{\"metadata\":{\"labels\":{\"" + lrName + "\":\"patched\"}}}"
+		limitRange, err = lrClient.Patch(context.TODO(), lrName, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
+		framework.ExpectNoError(err)
+		framework.Logf("limitRange.obj.Labels: %#v", limitRange.ObjectMeta.Labels)
+
+		ginkgo.By(fmt.Sprintf("Delete LimitRange %q by Collection with labelSelector: %q", lrName, patchedLabelSelector))
+		err = lrClient.DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: patchedLabelSelector})
 		framework.ExpectNoError(err, "failed to delete the LimitRange by Collection")
 
 		ginkgo.By(fmt.Sprintf("Confirm that the limitRange %q has been deleted", lrName))
-		patchedLabelSelector := lrName + "=patched"
 		err = wait.PollImmediate(1*time.Second, 10*time.Second, checkLimitRangeListQuantity(f, patchedLabelSelector, 0))
 		framework.ExpectNoError(err, "failed to count the required limitRanges")
 		framework.Logf("LimitRange %q has been deleted.", lrName)
