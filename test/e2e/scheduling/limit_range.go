@@ -18,12 +18,14 @@ package scheduling
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -228,8 +230,8 @@ var _ = SIGDescribe("LimitRange", func() {
 
 		lrClient := f.ClientSet.CoreV1().LimitRanges(f.Namespace.Name)
 		lrName := "e2e-limitrange-" + utilrand.String(5)
-		e2eLabel := map[string]string{lrName: "created"}
-		lrLabelSelector := labels.SelectorFromSet(e2eLabel).String()
+		createdLabel := map[string]string{lrName: "created"}
+		createdLabelSelector := labels.SelectorFromSet(createdLabel).String()
 		patchedLabelSelector := lrName + "=patched"
 
 		min := getResourceList("50m", "100Mi", "100Gi")
@@ -244,7 +246,7 @@ var _ = SIGDescribe("LimitRange", func() {
 				Name: lrName,
 				Labels: map[string]string{
 					"time": value,
-					lrName: e2eLabel[lrName],
+					lrName: createdLabel[lrName],
 				},
 			},
 			Spec: v1.LimitRangeSpec{
@@ -263,12 +265,12 @@ var _ = SIGDescribe("LimitRange", func() {
 
 		ginkgo.By(fmt.Sprintf("Creating LimitRange %q", lrName))
 		limitRange, err := lrClient.Create(context.TODO(), limitRange, metav1.CreateOptions{})
-		framework.ExpectNoError(err)
+		framework.ExpectNoError(err, "Failed to create limitRange %q", lrName)
 
 		// Listing across all namespaces to verify api endpoint: listCoreV1LimitRangeForAllNamespaces
-		ginkgo.By(fmt.Sprintf("Listing all LimitRanges with label %q", lrLabelSelector))
-		limitRangeList, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{LabelSelector: lrLabelSelector})
-		framework.ExpectNoError(err, "Failed to list limitRanges: %v", err)
+		ginkgo.By(fmt.Sprintf("Listing all LimitRanges with label %q", createdLabelSelector))
+		limitRangeList, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{LabelSelector: createdLabelSelector})
+		framework.ExpectNoError(err, "Failed to list any limitRanges: %v", err)
 		framework.ExpectEqual(len(limitRangeList.Items), 1, "Failed to find any limitRanges")
 
 		limitRangeItem := limitRangeList.Items[0]
@@ -278,10 +280,24 @@ var _ = SIGDescribe("LimitRange", func() {
 		newMin := getResourceList("9m", "49Mi", "49Gi")
 		limitRange.Spec.Limits[0].Min = newMin
 
-		payload := "{\"metadata\":{\"labels\":{\"" + lrName + "\":\"patched\"}}}"
-		limitRange, err = lrClient.Patch(context.TODO(), lrName, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
-		framework.ExpectNoError(err)
-		framework.ExpectEqual(limitRange.Labels[lrName], "patched", "Did not find 'patched' label for this limitRange. Current labels: %v", limitRange.Labels)
+		limitRangePayload, err := json.Marshal(v1.LimitRange{
+			ObjectMeta: metav1.ObjectMeta{
+				CreationTimestamp: limitRange.CreationTimestamp,
+				Labels: map[string]string{
+					lrName: "patched",
+				},
+			},
+			Spec: v1.LimitRangeSpec{
+				Limits: limitRange.Spec.Limits,
+			},
+		})
+		framework.ExpectNoError(err, "Failed to marshal limitRange JSON")
+
+		patchedLimitRange, err := lrClient.Patch(context.TODO(), lrName, types.StrategicMergePatchType, []byte(limitRangePayload), metav1.PatchOptions{})
+		framework.ExpectNoError(err, "Failed to patch limitRange %q", lrName)
+		framework.ExpectEqual(patchedLimitRange.Labels[lrName], "patched", "%q label didn't have value 'patched' for this limitRange. Current labels: %v", lrName, patchedLimitRange.Labels)
+		checkMinLimitRange := apiequality.Semantic.DeepEqual(patchedLimitRange.Spec.Limits[0].Min, newMin)
+		framework.ExpectEqual(checkMinLimitRange, true, "LimitRange does not have the correct min limitRange. Currently is %#v ", patchedLimitRange.Spec.Limits[0].Min)
 		framework.Logf("LimitRange %q has been patched", lrName)
 
 		ginkgo.By(fmt.Sprintf("Delete LimitRange %q by Collection with labelSelector: %q", lrName, patchedLabelSelector))
