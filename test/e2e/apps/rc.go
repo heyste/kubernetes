@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -389,6 +390,29 @@ var _ = SIGDescribe("ReplicationController", func() {
 			_ = f.ClientSet.CoreV1().ReplicationControllers(testRcNamespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "test-rc-static=true"})
 			return err
 		})
+	})
+
+	ginkgo.It("kb203", func() {
+		rcClient := f.ClientSet.CoreV1().ReplicationControllers(ns)
+		rcName := "e2e-rc-" + utilrand.String(5)
+		replicas := int32(1)
+
+		ginkgo.By(fmt.Sprintf("Creating replication controller %q", rcName))
+		newRC := newRC(rcName, replicas, map[string]string{"name": rcName}, WebserverImageName, WebserverImage, nil)
+		rc, err := rcClient.Create(context.TODO(), newRC, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		framework.Logf("rc: %#v", rc)
+
+		// Let's give the RC time to sync
+		time.Sleep(10 * time.Second)
+
+		ginkgo.By(fmt.Sprintf("Getting %q scale subresource", rcName))
+		scale, err := rcClient.GetScale(context.TODO(), rcName, metav1.GetOptions{})
+		if err != nil {
+			framework.Failf("Failed to get scale subresource: %v", err)
+		}
+
+		framework.Logf("scale: %#v", scale)
 	})
 })
 
