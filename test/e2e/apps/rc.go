@@ -395,24 +395,38 @@ var _ = SIGDescribe("ReplicationController", func() {
 	ginkgo.It("kb203", func() {
 		rcClient := f.ClientSet.CoreV1().ReplicationControllers(ns)
 		rcName := "e2e-rc-" + utilrand.String(5)
-		replicas := int32(1)
 
 		ginkgo.By(fmt.Sprintf("Creating replication controller %q", rcName))
-		newRC := newRC(rcName, replicas, map[string]string{"name": rcName}, WebserverImageName, WebserverImage, nil)
-		rc, err := rcClient.Create(context.TODO(), newRC, metav1.CreateOptions{})
+		rc := newRC(rcName, int32(1), map[string]string{"name": rcName}, WebserverImageName, WebserverImage, nil)
+		rc, err := rcClient.Create(context.TODO(), rc, metav1.CreateOptions{})
 		framework.ExpectNoError(err)
 		framework.Logf("rc: %#v", rc)
 
 		// Let's give the RC time to sync
-		time.Sleep(10 * time.Second)
+		time.Sleep(5 * time.Second)
 
 		ginkgo.By(fmt.Sprintf("Getting %q scale subresource", rcName))
 		scale, err := rcClient.GetScale(context.TODO(), rcName, metav1.GetOptions{})
-		if err != nil {
-			framework.Failf("Failed to get scale subresource: %v", err)
-		}
+		framework.ExpectNoError(err, "Failed to get scale subresource: %v", err)
 
 		framework.Logf("scale: %#v", scale)
+
+		ginkgo.By("Updating a scale subresource")
+		scale.ResourceVersion = "" // indicate the scale update should be unconditional
+		scale.Spec.Replicas = 2
+		scaleResult, err := rcClient.UpdateScale(context.TODO(), rcName, scale, metav1.UpdateOptions{})
+		framework.ExpectNoError(err, "Failed to get scale subresource: %v", err)
+		if err != nil {
+			framework.Failf("Failed to put scale subresource: %v", err)
+		}
+		framework.ExpectEqual(scaleResult.Spec.Replicas, int32(2))
+		framework.Logf("scaleResult: %#v", scaleResult.Spec.Replicas)
+
+		ginkgo.By("Verifying the replication controller Spec.Replicas was modified")
+		rc, err = rcClient.Get(context.TODO(), rcName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "Failed to get deployment resource: %v", err)
+		framework.ExpectEqual(*(rc.Spec.Replicas), int32(2))
+		framework.Logf("rc.Spec.Replicas: %#v", *(rc.Spec.Replicas))
 	})
 })
 
