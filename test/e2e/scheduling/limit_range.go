@@ -228,17 +228,10 @@ var _ = SIGDescribe("LimitRange", func() {
 
 	ginkgo.It("should list, patch and delete a LimitRange by collection", func() {
 
-		lrClient := f.ClientSet.CoreV1().LimitRanges(f.Namespace.Name)
+		ns := f.Namespace.Name
+		lrClient := f.ClientSet.CoreV1().LimitRanges(ns)
 		lrName := "e2e-limitrange-" + utilrand.String(5)
-		ginkgo.By("Creating another namespace...")
-		lrNamespace, err := f.CreateNamespace(lrName, nil)
-		framework.ExpectNoError(err, "failed creating Namespace")
-		framework.Logf("2nd ns: %#v", lrNamespace.ObjectMeta.Name)
-		lrSecondClient := f.ClientSet.CoreV1().LimitRanges(lrNamespace.ObjectMeta.Name)
-		framework.Logf("2nd client: %#v", lrSecondClient)
-		time.Sleep(10 * time.Second)
-		createdLabel := map[string]string{lrName: "created"}
-		createdLabelSelector := labels.SelectorFromSet(createdLabel).String()
+		e2eLabelSelector := "e2e-test=" + lrName
 		patchedLabelSelector := lrName + "=patched"
 
 		min := getResourceList("50m", "100Mi", "100Gi")
@@ -251,7 +244,8 @@ var _ = SIGDescribe("LimitRange", func() {
 			ObjectMeta: metav1.ObjectMeta{
 				Name: lrName,
 				Labels: map[string]string{
-					lrName: createdLabel[lrName],
+					"e2e-test": lrName,
+					lrName:     "created",
 				},
 			},
 			Spec: v1.LimitRangeSpec{
@@ -267,29 +261,30 @@ var _ = SIGDescribe("LimitRange", func() {
 				},
 			},
 		}
+		// Create a copy to be used in a second namespace
+		limitRange2 := &v1.LimitRange{}
+		*limitRange2 = *limitRange
 
 		ginkgo.By(fmt.Sprintf("Creating LimitRange %q in namespace %q", lrName, f.Namespace.Name))
-		limitRange, err = lrClient.Create(context.TODO(), limitRange, metav1.CreateOptions{})
+		limitRange, err := lrClient.Create(context.TODO(), limitRange, metav1.CreateOptions{})
 		framework.ExpectNoError(err, "Failed to create limitRange %q", lrName)
 
-		ginkgo.By(fmt.Sprintf("Creating LimitRange %q in namespace %q", lrName, lrNamespace.Name))
-		// limitRange2, err := lrSecondClient.Create(context.TODO(), limitRange, metav1.CreateOptions{})
-		limitRange.ObjectMeta.Namespace = lrNamespace.ObjectMeta.Name
-		limitRange.ResourceVersion = ""
-		limitRange2, err := f.ClientSet.CoreV1().LimitRanges(lrNamespace.ObjectMeta.Name).Create(context.TODO(), limitRange, metav1.CreateOptions{})
-		framework.Logf("err: %#v", err)
+		ginkgo.By("Creating another limitRange in another namespace")
+		lrNamespace, err := f.CreateNamespace(lrName, nil)
+		framework.ExpectNoError(err, "failed creating Namespace")
+		framework.Logf("Namespace %q created", lrNamespace.ObjectMeta.Name)
+		framework.Logf(fmt.Sprintf("Creating LimitRange %q in namespace %q", lrName, lrNamespace.Name))
+		_, err = f.ClientSet.CoreV1().LimitRanges(lrNamespace.ObjectMeta.Name).Create(context.TODO(), limitRange2, metav1.CreateOptions{})
 		framework.ExpectNoError(err, "Failed to create limitRange %q", lrName)
-		framework.Logf("2nd limitRange: %#v", limitRange2)
+
 		// Listing across all namespaces to verify api endpoint: listCoreV1LimitRangeForAllNamespaces
-		ginkgo.By(fmt.Sprintf("Listing all LimitRanges with label %q", createdLabelSelector))
-		limitRangeList, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{LabelSelector: createdLabelSelector})
+		ginkgo.By(fmt.Sprintf("Listing all LimitRanges with label %q", e2eLabelSelector))
+		limitRangeList, err := f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{LabelSelector: e2eLabelSelector})
 		framework.ExpectNoError(err, "Failed to list any limitRanges: %v", err)
 		framework.ExpectEqual(len(limitRangeList.Items), 2, "Failed to find any limitRanges")
+		framework.Logf("Found %d limitRanges", len(limitRangeList.Items))
 
-		limitRangeItem := limitRangeList.Items[0]
-		framework.Logf("Found limitRange %q in namespace %q", limitRangeItem.ObjectMeta.Name, limitRangeItem.ObjectMeta.Namespace)
-
-		ginkgo.By(fmt.Sprintf("Patching LimitRange %q", lrName))
+		ginkgo.By(fmt.Sprintf("Patching LimitRange %q in %q namespace", lrName, ns))
 		newMin := getResourceList("9m", "49Mi", "49Gi")
 		limitRange.Spec.Limits[0].Min = newMin
 
@@ -321,6 +316,12 @@ var _ = SIGDescribe("LimitRange", func() {
 		err = wait.PollImmediate(1*time.Second, 10*time.Second, checkLimitRangeListQuantity(f, patchedLabelSelector, 0))
 		framework.ExpectNoError(err, "failed to count the required limitRanges")
 		framework.Logf("LimitRange %q has been deleted.", lrName)
+
+		ginkgo.By(fmt.Sprintf("Confirm that a single LimitRange still exists with label %q", e2eLabelSelector))
+		limitRangeList, err = f.ClientSet.CoreV1().LimitRanges("").List(context.TODO(), metav1.ListOptions{LabelSelector: e2eLabelSelector})
+		framework.ExpectNoError(err, "Failed to list any limitRanges: %v", err)
+		framework.ExpectEqual(len(limitRangeList.Items), 1, "Failed to find the correct limitRange count")
+		framework.Logf("Found %d limitRange", len(limitRangeList.Items))
 	})
 })
 
