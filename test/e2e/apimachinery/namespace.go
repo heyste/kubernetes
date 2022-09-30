@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientscheme "k8s.io/client-go/kubernetes/scheme"
@@ -381,6 +382,35 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		framework.ExpectEqual(updatedNamespace.ObjectMeta.Labels[ns], "updated", "Failed to update namespace %q. Current Labels: %#v", ns, updatedNamespace.Labels)
 		framework.Logf("Namespace %q now has labels, %#v", ns, updatedNamespace.Labels)
 	})
+
+	ginkgo.It("should apply a finalizer to a Namespace", func() {
+		var updatedNamespace *v1.Namespace
+		nsName := "e2e-ns-" + utilrand.String(5)
+
+		testNamespace, err := f.CreateNamespace(nsName, nil)
+		framework.ExpectNoError(err, "failed creating Namespace")
+		ns := testNamespace.ObjectMeta.Name
+		nsClient := f.ClientSet.CoreV1().Namespaces()
+
+		ginkgo.By(fmt.Sprintf("Updating Namespace %q", ns))
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			updatedNamespace, err = nsClient.Get(context.TODO(), ns, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to get Namespace %q", ns)
+			framework.Logf("initial Namespace: %#v", updatedNamespace)
+
+			fakeFinalizer := "kube.io/dummy-finalizer"
+			updatedNamespace.Finalizers = []string{fakeFinalizer}
+			updatedNamespace.Labels[ns] = "updated"
+			updatedNamespace, err = nsClient.Update(context.TODO(), updatedNamespace, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err, "failed to update Namespace: %q", ns)
+		framework.ExpectEqual(updatedNamespace.ObjectMeta.Labels[ns], "updated", "Failed to update namespace %q. Current Labels: %#v", ns, updatedNamespace.Labels)
+		framework.Logf("Namespace %q now has labels, %#v", ns, updatedNamespace.Labels)
+
+		framework.Logf("updated Namespace: %#v", updatedNamespace)
+	})
+
 })
 
 func unstructuredToNamespace(obj *unstructured.Unstructured) (*v1.Namespace, error) {
