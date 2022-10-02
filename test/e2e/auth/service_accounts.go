@@ -811,11 +811,11 @@ var _ = SIGDescribe("ServiceAccounts", func() {
 			AutomountServiceAccountToken: pointer.Bool(false),
 		}
 
-		ginkgo.By(fmt.Sprintf("Creating ServieAccount %q ", saName))
+		ginkgo.By(fmt.Sprintf("Creating ServiceAccount %q ", saName))
 		createdServiceAccount, err := saClient.Create(context.TODO(), initialServiceAccount, metav1.CreateOptions{})
 		framework.ExpectNoError(err)
+		framework.ExpectEqual(createdServiceAccount.AutomountServiceAccountToken, pointer.Bool(false), "Failed to set AutomountServiceAccountToken")
 		framework.Logf("AutomountServiceAccountToken: %v", *createdServiceAccount.AutomountServiceAccountToken)
-		framework.Logf("createdServiceAccount: %#v", createdServiceAccount)
 
 		ginkgo.By(fmt.Sprintf("Updating ServiceAccount %q ", saName))
 		var updatedServiceAccount *v1.ServiceAccount
@@ -828,8 +828,8 @@ var _ = SIGDescribe("ServiceAccounts", func() {
 			return err
 		})
 		framework.ExpectNoError(err, "Failed to update ServiceAccount")
+		framework.ExpectEqual(updatedServiceAccount.AutomountServiceAccountToken, pointer.Bool(true), "Failed to set AutomountServiceAccountToken")
 		framework.Logf("AutomountServiceAccountToken: %v", *updatedServiceAccount.AutomountServiceAccountToken)
-		framework.Logf("updatedServiceAccount: %#v", updatedServiceAccount)
 	})
 })
 
