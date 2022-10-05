@@ -388,18 +388,19 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		var updatedNamespace *v1.Namespace
 		nsName := "e2e-ns-" + utilrand.String(5)
 
+		ginkgo.By(fmt.Sprintf("Creating namespace %q", nsName))
 		testNamespace, err := f.CreateNamespace(nsName, nil)
 		framework.ExpectNoError(err, "failed creating Namespace")
 		ns := testNamespace.ObjectMeta.Name
 		nsClient := f.ClientSet.CoreV1().Namespaces()
 		framework.Logf("Namespace %q has %#v", testNamespace.Name, testNamespace.Spec.Finalizers)
 
-		ginkgo.By(fmt.Sprintf("Adding finalizer to namespace %q", ns))
+		ginkgo.By(fmt.Sprintf("Adding e2e finalizer to namespace %q", ns))
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			updatedNamespace, err = nsClient.Get(context.TODO(), ns, metav1.GetOptions{})
 			framework.ExpectNoError(err, "Unable to get Namespace %q", ns)
 
-			fakeFinalizer := "e2e/dummy-finalizer"
+			fakeFinalizer := "e2e/finalizer"
 			testNamespace.Spec.Finalizers = append(testNamespace.Spec.Finalizers, v1.FinalizerName(fakeFinalizer))
 
 			updatedNamespace, err = nsClient.Finalize(context.TODO(), testNamespace, metav1.UpdateOptions{})
@@ -409,7 +410,7 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		framework.ExpectEqual(len(updatedNamespace.Spec.Finalizers), 2, "The current count of finalizers is not correct. Namespace %q has %#v", updatedNamespace.Spec.Finalizers)
 		framework.Logf("Namespace %q has %#v", updatedNamespace.Name, updatedNamespace.Spec.Finalizers)
 
-		ginkgo.By(fmt.Sprintf("Removing finalizer from namespace %q", ns))
+		ginkgo.By(fmt.Sprintf("Removing e2e finalizer from namespace %q", ns))
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			updatedNamespace, err = nsClient.Get(context.TODO(), ns, metav1.GetOptions{})
 			framework.ExpectNoError(err, "Unable to get namespace %q", ns)
