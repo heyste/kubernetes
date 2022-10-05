@@ -393,7 +393,7 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		nsClient := f.ClientSet.CoreV1().Namespaces()
 		framework.Logf("Namespace %q has %#v", testNamespace.Name, testNamespace.Spec.Finalizers)
 
-		ginkgo.By(fmt.Sprintf("Updating Namespace %q", ns))
+		ginkgo.By(fmt.Sprintf("Adding finalizer to namespace %q", ns))
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			updatedNamespace, err = nsClient.Get(context.TODO(), ns, metav1.GetOptions{})
 			framework.ExpectNoError(err, "Unable to get Namespace %q", ns)
@@ -404,7 +404,19 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 			updatedNamespace, err = nsClient.Finalize(context.TODO(), testNamespace, metav1.UpdateOptions{})
 			return err
 		})
-		framework.ExpectNoError(err, "failed to update Namespace: %q", ns)
+		framework.ExpectNoError(err, "failed to add finalizer to the namespace: %q", ns)
+		framework.Logf("Namespace %q has %#v", updatedNamespace.Name, updatedNamespace.Spec.Finalizers)
+
+		ginkgo.By(fmt.Sprintf("Removing finalizer from namespace %q", ns))
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			updatedNamespace, err = nsClient.Get(context.TODO(), ns, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to get namespace %q", ns)
+
+			updatedNamespace.Spec.Finalizers = updatedNamespace.Spec.Finalizers[:1]
+			updatedNamespace, err = nsClient.Finalize(context.TODO(), updatedNamespace, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err, "failed to remove finalizer from namespace: %q", ns)
 		framework.Logf("Namespace %q has %#v", updatedNamespace.Name, updatedNamespace.Spec.Finalizers)
 	})
 
