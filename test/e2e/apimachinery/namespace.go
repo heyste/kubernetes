@@ -384,6 +384,7 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 	})
 
 	ginkgo.It("should apply a finalizer to a Namespace", func() {
+
 		var updatedNamespace *v1.Namespace
 		nsName := "e2e-ns-" + utilrand.String(5)
 
@@ -405,6 +406,7 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 			return err
 		})
 		framework.ExpectNoError(err, "failed to add finalizer to the namespace: %q", ns)
+		framework.ExpectEqual(len(updatedNamespace.Spec.Finalizers), 2, "The current count of finalizers is not correct. Namespace %q has %#v", updatedNamespace.Spec.Finalizers)
 		framework.Logf("Namespace %q has %#v", updatedNamespace.Name, updatedNamespace.Spec.Finalizers)
 
 		ginkgo.By(fmt.Sprintf("Removing finalizer from namespace %q", ns))
@@ -417,6 +419,7 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 			return err
 		})
 		framework.ExpectNoError(err, "failed to remove finalizer from namespace: %q", ns)
+		framework.ExpectEqual(len(updatedNamespace.Spec.Finalizers), 1, "The current count of finalizers is not correct. Namespace %q has %#v", updatedNamespace.Spec.Finalizers)
 		framework.Logf("Namespace %q has %#v", updatedNamespace.Name, updatedNamespace.Spec.Finalizers)
 	})
 
