@@ -391,24 +391,21 @@ var _ = SIGDescribe("Namespaces [Serial]", func() {
 		framework.ExpectNoError(err, "failed creating Namespace")
 		ns := testNamespace.ObjectMeta.Name
 		nsClient := f.ClientSet.CoreV1().Namespaces()
+		framework.Logf("Namespace %q has %#v", testNamespace.Name, testNamespace.Spec.Finalizers)
 
 		ginkgo.By(fmt.Sprintf("Updating Namespace %q", ns))
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			updatedNamespace, err = nsClient.Get(context.TODO(), ns, metav1.GetOptions{})
 			framework.ExpectNoError(err, "Unable to get Namespace %q", ns)
-			framework.Logf("initial Namespace: %#v", updatedNamespace)
 
-			fakeFinalizer := "kube.io/dummy-finalizer"
-			updatedNamespace.Finalizers = []string{fakeFinalizer}
-			updatedNamespace.Labels[ns] = "updated"
-			updatedNamespace, err = nsClient.Update(context.TODO(), updatedNamespace, metav1.UpdateOptions{})
+			fakeFinalizer := "e2e/dummy-finalizer"
+			testNamespace.Spec.Finalizers = append(testNamespace.Spec.Finalizers, v1.FinalizerName(fakeFinalizer))
+
+			updatedNamespace, err = nsClient.Finalize(context.TODO(), testNamespace, metav1.UpdateOptions{})
 			return err
 		})
 		framework.ExpectNoError(err, "failed to update Namespace: %q", ns)
-		framework.ExpectEqual(updatedNamespace.ObjectMeta.Labels[ns], "updated", "Failed to update namespace %q. Current Labels: %#v", ns, updatedNamespace.Labels)
-		framework.Logf("Namespace %q now has labels, %#v", ns, updatedNamespace.Labels)
-
-		framework.Logf("updated Namespace: %#v", updatedNamespace)
+		framework.Logf("Namespace %q has %#v", updatedNamespace.Name, updatedNamespace.Spec.Finalizers)
 	})
 
 })
