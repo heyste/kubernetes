@@ -1027,13 +1027,10 @@ var _ = SIGDescribe("ResourceQuota", func() {
 
 		initialResourceQuota, err := rqClient.Get(context.TODO(), rqName, metav1.GetOptions{})
 		framework.ExpectNoError(err)
-		framework.ExpectEqual(*initialResourceQuota.Spec.Hard.Cpu(), resource.MustParse("500m"), "Hard cpu value for ResourceQuota %q is %s not 500m.", initialResourceQuota.ObjectMeta.Name, initialResourceQuota.Spec.Hard.Cpu().String())
+		framework.ExpectEqual(*initialResourceQuota.Spec.Hard.Cpu(), resource.MustParse("500m"), "Hard cpu value for ResourceQuota %q is %s not 500m.", initialResourceQuota.Name, initialResourceQuota.Spec.Hard.Cpu().String())
 		framework.Logf("Resource quota %q reports spec: hard cpu limit of %s", rqName, initialResourceQuota.Spec.Hard.Cpu())
-		framework.ExpectEqual(*initialResourceQuota.Spec.Hard.Memory(), resource.MustParse("500Mi"), "Hard memory value for ResourceQuota %q is %s not 500Mi.", initialResourceQuota.ObjectMeta.Name, initialResourceQuota.Spec.Hard.Cpu().String())
+		framework.ExpectEqual(*initialResourceQuota.Spec.Hard.Memory(), resource.MustParse("500Mi"), "Hard memory value for ResourceQuota %q is %s not 500Mi.", initialResourceQuota.Name, initialResourceQuota.Spec.Hard.Memory().String())
 		framework.Logf("Resource quota %q reports spec: hard memory limit of %s", rqName, initialResourceQuota.Spec.Hard.Memory())
-
-		// nextResourceQuota, err := rqClient.Get(context.TODO(), rqName, metav1.GetOptions{})
-		// framework.ExpectNoError(err)
 
 		ginkgo.By(fmt.Sprintf("Updating resourceQuota %q /status", rqName))
 		var updatedResourceQuota *v1.ResourceQuota
@@ -1056,20 +1053,20 @@ var _ = SIGDescribe("ResourceQuota", func() {
 
 		_, err = watchtools.Until(ctx, rqList.ResourceVersion, w, func(event watch.Event) (bool, error) {
 			if rq, ok := event.Object.(*v1.ResourceQuota); ok {
-				found := rq.ObjectMeta.Name == updatedResourceQuota.ObjectMeta.Name &&
-					rq.ObjectMeta.Namespace == ns &&
+				found := rq.Name == updatedResourceQuota.Name &&
+					rq.Namespace == ns &&
 					apiequality.Semantic.DeepEqual(rq.Status.Hard, updatedResourceQuota.Spec.Hard)
 				if !found {
-					framework.Logf("observed resourceQuota %q in namespace %q with hard status: %#v", rq.ObjectMeta.Name, rq.ObjectMeta.Namespace, rq.Status.Hard)
+					framework.Logf("observed resourceQuota %q in namespace %q with hard status: %#v", rq.Name, rq.Namespace, rq.Status.Hard)
 					return false, nil
 				}
-				framework.Logf("Found resourceQuota %q in namespace %q with hard status: %#v", rq.ObjectMeta.Name, rq.ObjectMeta.Namespace, rq.Status.Hard)
+				framework.Logf("Found resourceQuota %q in namespace %q with hard status: %#v", rq.Name, rq.Namespace, rq.Status.Hard)
 				return found, nil
 			}
 			framework.Logf("Observed event: %+v", event.Object)
 			return false, nil
 		})
-		framework.ExpectNoError(err, "failed to locate ResourceQuota %q in namespace %q", updatedResourceQuota.ObjectMeta.Name, ns)
+		framework.ExpectNoError(err, "failed to locate ResourceQuota %q in namespace %q", updatedResourceQuota.Name, ns)
 		framework.Logf("ResourceQuota %q /status was updated", updatedResourceQuota.Name)
 
 		// Sync resourceQuota list before patching /status
@@ -1081,7 +1078,6 @@ var _ = SIGDescribe("ResourceQuota", func() {
 			[]byte(`{"spec":{"hard":{"cpu":"1","memory":"1Gi"}}}`),
 			metav1.PatchOptions{})
 		framework.ExpectNoError(err, "Could not patch resourcequota %q. Error: %v", xResourceQuota.Name, err)
-
 		framework.Logf("Resource quota %q reports spec: hard cpu limit of %s", rqName, xResourceQuota.Spec.Hard.Cpu())
 		framework.Logf("Resource quota %q reports spec: hard memory limit of %s", rqName, xResourceQuota.Spec.Hard.Memory())
 
@@ -1101,20 +1097,20 @@ var _ = SIGDescribe("ResourceQuota", func() {
 
 		_, err = watchtools.Until(ctx, rqList.ResourceVersion, w, func(event watch.Event) (bool, error) {
 			if rq, ok := event.Object.(*v1.ResourceQuota); ok {
-				found := rq.ObjectMeta.Name == patchedResourceQuota.ObjectMeta.Name &&
-					rq.ObjectMeta.Namespace == ns &&
+				found := rq.Name == patchedResourceQuota.Name &&
+					rq.Namespace == ns &&
 					apiequality.Semantic.DeepEqual(rq.Status.Hard, patchedResourceQuota.Spec.Hard)
 				if !found {
-					framework.Logf("observed resourceQuota %q in namespace %q with hard status: %#v", rq.ObjectMeta.Name, rq.ObjectMeta.Namespace, rq.Status.Hard)
+					framework.Logf("observed resourceQuota %q in namespace %q with hard status: %#v", rq.Name, rq.Namespace, rq.Status.Hard)
 					return false, nil
 				}
-				framework.Logf("Found resourceQuota %q in namespace %q with hard status: %#v", rq.ObjectMeta.Name, rq.ObjectMeta.Namespace, rq.Status.Hard)
+				framework.Logf("Found resourceQuota %q in namespace %q with hard status: %#v", rq.Name, rq.Namespace, rq.Status.Hard)
 				return found, nil
 			}
 			framework.Logf("Observed event: %+v", event.Object)
 			return false, nil
 		})
-		framework.ExpectNoError(err, "failed to locate ResourceQuota %q in namespace %q", patchedResourceQuota.ObjectMeta.Name, ns)
+		framework.ExpectNoError(err, "failed to locate ResourceQuota %q in namespace %q", patchedResourceQuota.Name, ns)
 		framework.Logf("ResourceQuota %q /status was patched", patchedResourceQuota.Name)
 
 		ginkgo.By(fmt.Sprintf("Get %q /status", rqName))
@@ -1123,12 +1119,68 @@ var _ = SIGDescribe("ResourceQuota", func() {
 		framework.ExpectNoError(err)
 
 		rq, err := unstructuredToResourceQuota(unstruct)
-		framework.ExpectNoError(err, "Getting the status of the resource quota %q", rq.ObjectMeta.Name)
+		framework.ExpectNoError(err, "Getting the status of the resource quota %q", rq.Name)
 
-		framework.ExpectEqual(*rq.Status.Hard.Cpu(), resource.MustParse("1"), "Hard cpu value for ResourceQuota %q is %s not 1.", rq.ObjectMeta.Name, rq.Status.Hard.Cpu().String())
+		framework.ExpectEqual(*rq.Status.Hard.Cpu(), resource.MustParse("1"), "Hard cpu value for ResourceQuota %q is %s not 1.", rq.Name, rq.Status.Hard.Cpu().String())
 		framework.Logf("Resourcequota %q reports status: hard cpu of %s", rqName, rq.Status.Hard.Cpu())
-		framework.ExpectEqual(*rq.Status.Hard.Memory(), resource.MustParse("1Gi"), "Hard memory value for ResourceQuota %q is %s not 1Gi.", rq.ObjectMeta.Name, rq.Status.Hard.Cpu().String())
+		framework.ExpectEqual(*rq.Status.Hard.Memory(), resource.MustParse("1Gi"), "Hard memory value for ResourceQuota %q is %s not 1Gi.", rq.Name, rq.Status.Hard.Memory().String())
 		framework.Logf("Resourcequota %q reports status: hard memory of %s", rqName, rq.Status.Hard.Memory())
+
+		// Sync resourceQuota list before repatching /status
+		rqList, err = f.ClientSet.CoreV1().ResourceQuotas("").List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
+		framework.ExpectNoError(err, "failed to list Services")
+
+		ginkgo.By(fmt.Sprintf("Repatching %q /status before checking Spec is unchanged", rqName))
+		newHardLimits := v1.ResourceList{
+			v1.ResourceCPU:    resource.MustParse("2"),
+			v1.ResourceMemory: resource.MustParse("2Gi"),
+		}
+		rqStatusJSON, err = json.Marshal(newHardLimits)
+		framework.ExpectNoError(err)
+
+		repatchedResourceQuota, err := rqClient.Patch(context.TODO(), rqName, types.StrategicMergePatchType,
+			[]byte(`{"status": {"hard": `+string(rqStatusJSON)+`}}`),
+			metav1.PatchOptions{}, "status")
+		framework.ExpectNoError(err)
+
+		framework.ExpectEqual(*repatchedResourceQuota.Status.Hard.Cpu(), resource.MustParse("2"), "Hard cpu value for ResourceQuota %q is %s not 2.", repatchedResourceQuota.Name, repatchedResourceQuota.Status.Hard.Cpu().String())
+		framework.Logf("Resourcequota %q reports status: hard cpu of %s", repatchedResourceQuota.Name, repatchedResourceQuota.Status.Hard.Cpu())
+		framework.ExpectEqual(*repatchedResourceQuota.Status.Hard.Memory(), resource.MustParse("2Gi"), "Hard memory value for ResourceQuota %q is %s not 2Gi.", repatchedResourceQuota.Name, repatchedResourceQuota.Status.Hard.Memory().String())
+		framework.Logf("Resourcequota %q reports status: hard memory of %s", repatchedResourceQuota.Name, repatchedResourceQuota.Status.Hard.Memory())
+
+		_, err = watchtools.Until(ctx, rqList.ResourceVersion, w, func(event watch.Event) (bool, error) {
+			if rq, ok := event.Object.(*v1.ResourceQuota); ok {
+				found := rq.Name == patchedResourceQuota.Name &&
+					rq.Namespace == ns &&
+					*rq.Status.Hard.Cpu() == resource.MustParse("2") &&
+					*rq.Status.Hard.Memory() == resource.MustParse("2Gi")
+				if !found {
+					framework.Logf("observed resourceQuota %q in namespace %q with hard status: %#v", rq.Name, rq.Namespace, rq.Status.Hard)
+					return false, nil
+				}
+				framework.Logf("Found resourceQuota %q in namespace %q with hard status: %#v", rq.Name, rq.Namespace, rq.Status.Hard)
+				return found, nil
+			}
+			framework.Logf("Observed event: %+v", event.Object)
+			return false, nil
+		})
+		framework.ExpectNoError(err, "failed to locate ResourceQuota %q in namespace %q", patchedResourceQuota.Name, ns)
+
+		err = wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+			resourceQuotaResult, err := rqClient.Get(context.TODO(), rqName, metav1.GetOptions{})
+			framework.ExpectNoError(err)
+
+			if apiequality.Semantic.DeepEqual(resourceQuotaResult.Spec.Hard.Cpu(), resourceQuotaResult.Status.Hard.Cpu()) {
+				framework.ExpectEqual(*resourceQuotaResult.Status.Hard.Cpu(), resource.MustParse("1"), "Hard cpu value for ResourceQuota %q is %s not 1.", repatchedResourceQuota.Name, repatchedResourceQuota.Status.Hard.Cpu().String())
+				framework.ExpectEqual(*resourceQuotaResult.Status.Hard.Memory(), resource.MustParse("1Gi"), "Hard memory value for ResourceQuota %q is %s not 1Gi.", repatchedResourceQuota.Name, repatchedResourceQuota.Status.Hard.Memory().String())
+				framework.Logf("ResourceQuota %q Spec was unchanged and /status reset", resourceQuotaResult.Name)
+
+				return true, nil
+			}
+
+			return false, nil
+		})
+		framework.ExpectNoError(err)
 	})
 })
 
