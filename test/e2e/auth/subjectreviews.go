@@ -24,7 +24,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -42,7 +41,7 @@ var _ = SIGDescribe("SubjectReview", func() {
 
 		AuthClient := f.ClientSet.AuthorizationV1()
 		ns := f.Namespace.Name
-		saName := "sa-" + utilrand.String(5)
+		saName := "e2e"
 
 		ginkgo.By(fmt.Sprintf("Creating a Serviceaccount %q in namespace %q", saName, ns))
 
@@ -94,20 +93,20 @@ var _ = SIGDescribe("SubjectReview", func() {
 		expectedAllowed := sarResponse.Status.Allowed
 
 		ginkgo.By(fmt.Sprintf("Verifying as %q api 'list' configmaps in %q namespace", saUsername, ns))
-		_, err = impersonatedClientSet.CoreV1().ConfigMaps(ns).List(context.TODO(), metav1.ListOptions{})
+		_, requestErr := impersonatedClientSet.CoreV1().ConfigMaps(ns).List(context.TODO(), metav1.ListOptions{})
 
 		actuallyAllowed := false
 		switch {
-		case apierrors.IsForbidden(err):
+		case apierrors.IsForbidden(requestErr):
 			actuallyAllowed = false
-		case err != nil:
+		case requestErr != nil:
 			framework.Fail("Unexpected error")
 		default:
 			actuallyAllowed = true
 		}
 
 		if actuallyAllowed != expectedAllowed {
-			framework.Fail(fmt.Sprintf("Could not verify SubjectAccessReview for %q in namespace %q", saUsername, ns))
+			framework.Fail(fmt.Sprintf("Could not verify SubjectAccessReview for %q in namespace %q: SubjectAccessReview allowed: %v, request allowed: %v, request error: %v", saUsername, ns, expectedAllowed, actuallyAllowed, requestErr))
 		}
 		framework.Logf("SubjectAccessReview has been verified")
 
@@ -135,21 +134,8 @@ var _ = SIGDescribe("SubjectReview", func() {
 		framework.Logf("lsarResponse Status: %#v", lsarResponse.Status)
 		expectedAllowed = lsarResponse.Status.Allowed
 
-		ginkgo.By(fmt.Sprintf("Verifying as %q api 'list' configmaps in %q namespace", saUsername, ns))
-		_, err = impersonatedClientSet.CoreV1().ConfigMaps(ns).List(context.TODO(), metav1.ListOptions{})
-
-		actuallyAllowed = false
-		switch {
-		case apierrors.IsForbidden(err):
-			actuallyAllowed = false
-		case err != nil:
-			framework.Fail("Unexpected error")
-		default:
-			actuallyAllowed = true
-		}
-
 		if actuallyAllowed != expectedAllowed {
-			framework.Fail(fmt.Sprintf("Could not verify LocalSubjectAccessReview for %q in namespace %q", saUsername, ns))
+			framework.Fail(fmt.Sprintf("Could not verify LocalSubjectAccessReview for %q in namespace %q: LocalSubjectAccessReview allowed: %v, request allowed: %v, request error: %v", saUsername, ns, expectedAllowed, actuallyAllowed, requestErr))
 		}
 		framework.Logf("LocalSubjectAccessReview has been verified")
 	})
