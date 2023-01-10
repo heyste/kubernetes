@@ -648,6 +648,48 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	framework.ExpectNoError(err, "failed to locate APIService %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
 	framework.Logf("APIService Status for %s has been patched", apiServiceName)
 
+	ginkgo.By("Waiting for the APIService endpoints to be ready")
+	err = pollTimed(ctx, 100*time.Millisecond, 60*time.Second, func(ctx context.Context) (bool, error) {
+
+		currentAPIService, _ = aggrclient.ApiregistrationV1().APIServices().Get(ctx, "v1alpha1.wardle.example.com", metav1.GetOptions{})
+		currentPods, _ = client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+
+		request := restClient.Get().AbsPath("/apis/wardle.example.com/v1alpha1/namespaces/default/flunders")
+		request.SetHeader("Accept", "application/json")
+		_, err := request.DoRaw(ctx)
+		if err != nil {
+			status, ok := err.(*apierrors.StatusError)
+			if !ok {
+				return false, err
+			}
+			if status.Status().Code == 403 || status.Status().Code == 503 {
+				return false, nil
+			}
+			if status.Status().Code == 404 && strings.HasPrefix(err.Error(), "the server could not find the requested resource") {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}, "Waited %s for the sample-apiserver to be ready to handle requests.")
+	if err != nil {
+		currentAPIServiceJSON, _ := json.Marshal(currentAPIService)
+		framework.Logf("current APIService: %s", string(currentAPIServiceJSON))
+
+		currentPodsJSON, _ := json.Marshal(currentPods)
+		framework.Logf("current pods: %s", string(currentPodsJSON))
+
+		if currentPods != nil {
+			for _, pod := range currentPods.Items {
+				for _, container := range pod.Spec.Containers {
+					logs, err := e2epod.GetPodLogs(ctx, client, namespace, pod.Name, container.Name)
+					framework.Logf("logs of %s/%s (error: %v): %s", pod.Name, container.Name, err, logs)
+				}
+			}
+		}
+	}
+	framework.ExpectNoError(err, "gave up waiting for apiservice wardle to come up successfully")
+
 	// kubectl delete flunder test-flunder
 	err = dynamicClient.Delete(ctx, flunderName, metav1.DeleteOptions{})
 	validateErrorWithDebugInfo(ctx, f, err, pods, "deleting flunders(%v) using dynamic client", unstructuredList.Items)
