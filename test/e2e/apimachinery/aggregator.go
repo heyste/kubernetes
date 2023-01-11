@@ -42,6 +42,7 @@ import (
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eauth "k8s.io/kubernetes/test/e2e/framework/auth"
 	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -131,57 +132,59 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	_, err := client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
 	framework.ExpectNoError(err, "creating secret %s in namespace %s", secretName, namespace)
 
-	// kubectl create -f clusterrole.yaml
-	_, err = client.RbacV1().ClusterRoles().Create(ctx, &rbacv1.ClusterRole{
+	if e2eauth.IsRBACEnabled(ctx, client.RbacV1()) {
+		// kubectl create -f clusterrole.yaml
+		_, err = client.RbacV1().ClusterRoles().Create(ctx, &rbacv1.ClusterRole{
 
-		ObjectMeta: metav1.ObjectMeta{Name: "sample-apiserver-reader"},
-		Rules: []rbacv1.PolicyRule{
-			rbacv1helpers.NewRule("get", "list", "watch").Groups("").Resources("namespaces").RuleOrDie(),
-			rbacv1helpers.NewRule("get", "list", "watch").Groups("admissionregistration.k8s.io").Resources("*").RuleOrDie(),
-		},
-	}, metav1.CreateOptions{})
-	framework.ExpectNoError(err, "creating cluster role %s", "sample-apiserver-reader")
-
-	_, err = client.RbacV1().ClusterRoleBindings().Create(ctx, &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "wardler:" + namespace + ":sample-apiserver-reader",
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     "sample-apiserver-reader",
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				APIGroup:  "",
-				Kind:      "ServiceAccount",
-				Name:      "default",
-				Namespace: namespace,
+			ObjectMeta: metav1.ObjectMeta{Name: "sample-apiserver-reader"},
+			Rules: []rbacv1.PolicyRule{
+				rbacv1helpers.NewRule("get", "list", "watch").Groups("").Resources("namespaces").RuleOrDie(),
+				rbacv1helpers.NewRule("get", "list", "watch").Groups("admissionregistration.k8s.io").Resources("*").RuleOrDie(),
 			},
-		},
-	}, metav1.CreateOptions{})
-	framework.ExpectNoError(err, "creating cluster role binding %s", "wardler:"+namespace+":sample-apiserver-reader")
+		}, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "creating cluster role %s", "sample-apiserver-reader")
 
-	// kubectl create -f authDelegator.yaml
-	_, err = client.RbacV1().ClusterRoleBindings().Create(ctx, &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "wardler:" + namespace + ":auth-delegator",
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     "system:auth-delegator",
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				APIGroup:  "",
-				Kind:      "ServiceAccount",
-				Name:      "default",
-				Namespace: namespace,
+		_, err = client.RbacV1().ClusterRoleBindings().Create(ctx, &rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "wardler:" + namespace + ":sample-apiserver-reader",
 			},
-		},
-	}, metav1.CreateOptions{})
-	framework.ExpectNoError(err, "creating cluster role binding %s", "wardler:"+namespace+":auth-delegator")
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "ClusterRole",
+				Name:     "sample-apiserver-reader",
+			},
+			Subjects: []rbacv1.Subject{
+				{
+					APIGroup:  "",
+					Kind:      "ServiceAccount",
+					Name:      "default",
+					Namespace: namespace,
+				},
+			},
+		}, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "creating cluster role binding %s", "wardler:"+namespace+":sample-apiserver-reader")
+
+		// kubectl create -f authDelegator.yaml
+		_, err = client.RbacV1().ClusterRoleBindings().Create(ctx, &rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "wardler:" + namespace + ":auth-delegator",
+			},
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "ClusterRole",
+				Name:     "system:auth-delegator",
+			},
+			Subjects: []rbacv1.Subject{
+				{
+					APIGroup:  "",
+					Kind:      "ServiceAccount",
+					Name:      "default",
+					Namespace: namespace,
+				},
+			},
+		}, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "creating cluster role binding %s", "wardler:"+namespace+":auth-delegator")
+	}
 
 	// kubectl create -f deploy.yaml
 	deploymentName := "sample-apiserver-deployment"
@@ -288,28 +291,30 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	_, err = client.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{})
 	framework.ExpectNoError(err, "creating service account %s in namespace %s", "sample-apiserver", namespace)
 
-	// kubectl create -f auth-reader.yaml
-	_, err = client.RbacV1().RoleBindings("kube-system").Create(ctx, &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "wardler-auth-reader",
-			Annotations: map[string]string{
-				rbacv1.AutoUpdateAnnotationKey: "true",
+	if e2eauth.IsRBACEnabled(ctx, client.RbacV1()) {
+		// kubectl create -f auth-reader.yaml
+		_, err = client.RbacV1().RoleBindings("kube-system").Create(ctx, &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "wardler-auth-reader",
+				Annotations: map[string]string{
+					rbacv1.AutoUpdateAnnotationKey: "true",
+				},
 			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "",
-			Kind:     "Role",
-			Name:     "extension-apiserver-authentication-reader",
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      "default",
-				Namespace: namespace,
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: "",
+				Kind:     "Role",
+				Name:     "extension-apiserver-authentication-reader",
 			},
-		},
-	}, metav1.CreateOptions{})
-	framework.ExpectNoError(err, "creating role binding %s in namespace %s", "wardler-auth-reader", "kube-system")
+			Subjects: []rbacv1.Subject{
+				{
+					Kind:      "ServiceAccount",
+					Name:      "default",
+					Namespace: namespace,
+				},
+			},
+		}, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "creating role binding %s in namespace %s", "wardler-auth-reader", "kube-system")
+	}
 
 	// Wait for the extension apiserver to be up and healthy
 	// kubectl get deployments -n <aggregated-api-namespace> && status == Running
