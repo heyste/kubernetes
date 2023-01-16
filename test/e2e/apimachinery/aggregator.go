@@ -604,6 +604,22 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	framework.ExpectNoError(err, "failed to locate APIService %v with conditions: %v", apiServiceName, updatedStatus.Status.Conditions)
 	framework.Logf("APIService Status for %s has been updated", apiServiceName)
 
+	ginkgo.By(fmt.Sprintf("Replace APIService %s", apiServiceName))
+	var updatedApiService *apiregistrationv1.APIService
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		currentApiService, err := apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "Unable to get APIService %s", apiServiceName)
+		currentApiService.Labels = map[string]string{
+			apiServiceName: "updated",
+		}
+		updatedApiService, err = apiServiceClient.Update(context.TODO(), currentApiService, metav1.UpdateOptions{})
+		return err
+	})
+	framework.ExpectNoError(err)
+	framework.ExpectEqual(updatedApiService.Labels[apiServiceName], "updated", "should have the updated label but have %q", updatedApiService.Labels[apiServiceName])
+	framework.Logf("Found updated apiService label for %q", apiServiceName)
+
 	// kubectl delete flunder test-flunder
 	err = dynamicClient.Delete(ctx, flunderName, metav1.DeleteOptions{})
 	validateErrorWithDebugInfo(ctx, f, err, pods, "deleting flunders(%v) using dynamic client", unstructuredList.Items)
