@@ -330,7 +330,7 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 			Service: &apiregistrationv1.ServiceReference{
 				Namespace: namespace,
 				Name:      "sample-api",
-				Port:      pointer.Int32Ptr(aggregatorServicePort),
+				Port:      pointer.Int32(aggregatorServicePort),
 			},
 			Group:                "wardle.example.com",
 			Version:              "v1alpha1",
