@@ -61,6 +61,7 @@ import (
 const (
 	aggregatorServicePort = 7443
 
+	apiServiceRetryPeriod  = 1 * time.Second
 	apiServiceRetryTimeout = 2 * time.Minute
 )
 
@@ -634,6 +635,34 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 		framework.Failf("failed to get back the correct deleted flunders list %v from the dynamic client", unstructuredList)
 	}
 
+	ginkgo.By("Recreating test-flunder before removing endpoint via deleteCollection")
+	jsonFlunder, err = json.Marshal(testFlunder)
+	framework.ExpectNoError(err, "marshalling test-flunder for create using dynamic client")
+	unstruct = &unstructured.Unstructured{}
+	err = unstruct.UnmarshalJSON(jsonFlunder)
+	framework.ExpectNoError(err, "unmarshalling test-flunder as unstructured for create using dynamic client")
+	_, err = dynamicClient.Create(ctx, unstruct, metav1.CreateOptions{})
+	framework.ExpectNoError(err, "listing flunders using dynamic client")
+
+	// kubectl get flunders
+	unstructuredList, err = dynamicClient.List(ctx, metav1.ListOptions{})
+	framework.ExpectNoError(err, "listing flunders using dynamic client")
+	if len(unstructuredList.Items) != 1 {
+		framework.Failf("failed to get back the correct flunders list %v from the dynamic client", unstructuredList)
+	}
+
+	ginkgo.By(fmt.Sprintf("DeleteCollection APIService %s via labelSelector: %s", apiServiceName, apiServiceLabelSelector))
+
+	err = aggrclient.ApiregistrationV1().APIServices().DeleteCollection(context.TODO(),
+		metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64(1)},
+		metav1.ListOptions{LabelSelector: "apiservice=patched"})
+	framework.ExpectNoError(err, "Unable to delete apiservice %s", apiServiceName)
+
+	ginkgo.By("Confirm that the generated APIService has been deleted")
+	err = wait.PollImmediate(apiServiceRetryPeriod, apiServiceRetryTimeout, checkApiServiceListQuantity(aggrclient, apiServiceLabelSelector, 0))
+	framework.ExpectNoError(err, "failed to count the required APIServices")
+	framework.Logf("APIService %s has been deleted.", apiServiceName)
+
 	cleanTest(ctx, client, aggrclient, namespace)
 }
 
@@ -674,4 +703,23 @@ func generateFlunderName(base string) string {
 		return base
 	}
 	return fmt.Sprintf("%s-%d", base, id)
+}
+
+func checkApiServiceListQuantity(aggrclient *aggregatorclient.Clientset, label string, quantity int) func() (bool, error) {
+	return func() (bool, error) {
+		var err error
+
+		framework.Logf("Requesting list of APIServices to confirm quantity")
+
+		list, err := aggrclient.ApiregistrationV1().APIServices().List(context.TODO(), metav1.ListOptions{LabelSelector: label})
+		if err != nil {
+			return false, err
+		}
+
+		if len(list.Items) != quantity {
+			return false, err
+		}
+		framework.Logf("Found %d APIService with label %q", quantity, label)
+		return true, nil
+	}
 }
