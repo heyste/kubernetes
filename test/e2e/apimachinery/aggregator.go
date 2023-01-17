@@ -32,6 +32,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -531,9 +532,11 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	ginkgo.By("patch the APIService")
 	apiServiceName := "v1alpha1.wardle.example.com"
 	apiServiceClient := aggrclient.ApiregistrationV1().APIServices()
+	apiServiceLabel := map[string]string{"e2e-apiservice": "patched"}
+	apiServiceLabelSelector := labels.SelectorFromSet(apiServiceLabel).String()
 	apiServicePatch, err := json.Marshal(map[string]interface{}{
 		"metadata": map[string]interface{}{
-			"labels": map[string]string{"apiservice": "patched"},
+			"labels": apiServiceLabel,
 		},
 	})
 	framework.ExpectNoError(err, "failed to Marshal APIService JSON patch")
@@ -547,12 +550,12 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 
 	w := &cache.ListWatch{
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-			options.LabelSelector = "apiservice=patched"
+			options.LabelSelector = apiServiceLabelSelector
 			return apiServiceClient.Watch(context.TODO(), options)
 		},
 	}
 
-	apiServiceList, err := apiServiceClient.List(context.TODO(), metav1.ListOptions{LabelSelector: "apiservice=patched"})
+	apiServiceList, err := apiServiceClient.List(context.TODO(), metav1.ListOptions{LabelSelector: apiServiceLabelSelector})
 	framework.ExpectNoError(err, "failed to list API Services")
 
 	ginkgo.By("updating the APIService Status")
@@ -581,7 +584,7 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	_, err = watchtools.Until(ctx, apiServiceList.ResourceVersion, w, func(event watch.Event) (bool, error) {
 		if resource, ok := event.Object.(*apiregistrationv1.APIService); ok {
 			found := resource.ObjectMeta.Name == apiServiceName &&
-				resource.Labels["apiservice"] == "patched"
+				resource.Labels["e2e-apiservice"] == "patched"
 			if !found {
 				framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", resource.ObjectMeta.Name, resource.Labels, resource.Status.Conditions)
 				return false, nil
