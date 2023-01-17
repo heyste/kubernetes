@@ -541,29 +541,29 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 		},
 	})
 	framework.ExpectNoError(err, "failed to Marshal APIService JSON patch")
-	patchedResult, err := apiServiceClient.Patch(context.TODO(), apiServiceName, types.StrategicMergePatchType, []byte(apiServicePatch), metav1.PatchOptions{})
+	patchedResult, err := apiServiceClient.Patch(ctx, apiServiceName, types.StrategicMergePatchType, []byte(apiServicePatch), metav1.PatchOptions{})
 	framework.ExpectNoError(err, "failed to patch APIService")
 	framework.Logf("APIService labels: %v", patchedResult.Labels)
 
-	patchedApiService, err := apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+	patchedApiService, err := apiServiceClient.Get(ctx, apiServiceName, metav1.GetOptions{})
 	framework.ExpectNoError(err, "Unable to retrieve api service %s", apiServiceName)
 	framework.Logf("APIService labels: %v", patchedApiService.Labels)
 
 	w := &cache.ListWatch{
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 			options.LabelSelector = apiServiceLabelSelector
-			return apiServiceClient.Watch(context.TODO(), options)
+			return apiServiceClient.Watch(ctx, options)
 		},
 	}
 
-	apiServiceList, err := apiServiceClient.List(context.TODO(), metav1.ListOptions{LabelSelector: apiServiceLabelSelector})
+	apiServiceList, err := apiServiceClient.List(ctx, metav1.ListOptions{LabelSelector: apiServiceLabelSelector})
 	framework.ExpectNoError(err, "failed to list API Services")
 
 	ginkgo.By("updating the APIService Status")
 	var statusToUpdate, updatedStatus *apiregistrationv1.APIService
 
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		statusToUpdate, err = apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+		statusToUpdate, err = apiServiceClient.Get(ctx, apiServiceName, metav1.GetOptions{})
 		framework.ExpectNoError(err, "Unable to retrieve api service %s", apiServiceName)
 
 		statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, apiregistrationv1.APIServiceCondition{
@@ -573,7 +573,7 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 			Message: "Set from e2e test",
 		})
 
-		updatedStatus, err = apiServiceClient.UpdateStatus(context.TODO(), statusToUpdate, metav1.UpdateOptions{})
+		updatedStatus, err = apiServiceClient.UpdateStatus(ctx, statusToUpdate, metav1.UpdateOptions{})
 		return err
 	})
 	framework.ExpectNoError(err, "Failed to update status. %v", err)
@@ -612,12 +612,12 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	var updatedApiService *apiregistrationv1.APIService
 
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		currentApiService, err := apiServiceClient.Get(context.TODO(), apiServiceName, metav1.GetOptions{})
+		currentApiService, err := apiServiceClient.Get(ctx, apiServiceName, metav1.GetOptions{})
 		framework.ExpectNoError(err, "Unable to get APIService %s", apiServiceName)
 		currentApiService.Labels = map[string]string{
 			apiServiceName: "updated",
 		}
-		updatedApiService, err = apiServiceClient.Update(context.TODO(), currentApiService, metav1.UpdateOptions{})
+		updatedApiService, err = apiServiceClient.Update(ctx, currentApiService, metav1.UpdateOptions{})
 		return err
 	})
 	framework.ExpectNoError(err)
@@ -670,18 +670,18 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 		AbsPath("/apis/apiregistration.k8s.io/v1/apiservices/v1alpha1.wardle.example.com/status").
 		SetHeader("Accept", "application/json").
 		Body([]byte(payload)).
-		DoRaw(context.TODO())
+		DoRaw(ctx)
 	framework.ExpectNoError(err, "Patch failed for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
 
 	ginkgo.By(fmt.Sprintf("APIService deleteCollection with labelSelector: %q", apiServiceLabelSelector))
 
-	err = aggrclient.ApiregistrationV1().APIServices().DeleteCollection(context.TODO(),
+	err = aggrclient.ApiregistrationV1().APIServices().DeleteCollection(ctx,
 		metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64(1)},
 		metav1.ListOptions{LabelSelector: "apiservice=patched"})
 	framework.ExpectNoError(err, "Unable to delete apiservice %s", apiServiceName)
 
 	ginkgo.By("Confirm that the generated APIService has been deleted")
-	err = wait.PollImmediate(apiServiceRetryPeriod, apiServiceRetryTimeout, checkApiServiceListQuantity(aggrclient, apiServiceLabelSelector, 0))
+	err = wait.PollImmediate(apiServiceRetryPeriod, apiServiceRetryTimeout, checkApiServiceListQuantity(ctx, aggrclient, apiServiceLabelSelector, 0))
 	framework.ExpectNoError(err, "failed to count the required APIServices")
 	framework.Logf("APIService %s has been deleted.", apiServiceName)
 
@@ -727,13 +727,13 @@ func generateFlunderName(base string) string {
 	return fmt.Sprintf("%s-%d", base, id)
 }
 
-func checkApiServiceListQuantity(aggrclient *aggregatorclient.Clientset, label string, quantity int) func() (bool, error) {
+func checkApiServiceListQuantity(ctx context.Context, aggrclient *aggregatorclient.Clientset, label string, quantity int) func() (bool, error) {
 	return func() (bool, error) {
 		var err error
 
 		framework.Logf("Requesting list of APIServices to confirm quantity")
 
-		list, err := aggrclient.ApiregistrationV1().APIServices().List(context.TODO(), metav1.ListOptions{LabelSelector: label})
+		list, err := aggrclient.ApiregistrationV1().APIServices().List(ctx, metav1.ListOptions{LabelSelector: label})
 		if err != nil {
 			return false, err
 		}
