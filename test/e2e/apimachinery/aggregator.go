@@ -625,6 +625,7 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	framework.Logf("Found updated apiService label for %q", apiServiceName)
 
 	// kubectl delete flunder test-flunder
+	ginkgo.By(fmt.Sprintf("Delete APIService %q", flunderName))
 	err = dynamicClient.Delete(ctx, flunderName, metav1.DeleteOptions{})
 	validateErrorWithDebugInfo(ctx, f, err, pods, "deleting flunders(%v) using dynamic client", unstructuredList.Items)
 
@@ -651,7 +652,28 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 		framework.Failf("failed to get back the correct flunders list %v from the dynamic client", unstructuredList)
 	}
 
-	ginkgo.By(fmt.Sprintf("DeleteCollection APIService %s via labelSelector: %s", apiServiceName, apiServiceLabelSelector))
+	ginkgo.By("Patch APIService Status")
+	patch := apiregistrationv1.APIService{
+		Status: apiregistrationv1.APIServiceStatus{
+			Conditions: []apiregistrationv1.APIServiceCondition{
+				{
+					Type:   "StatusPatched",
+					Status: "True",
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(patch)
+	framework.ExpectNoError(err, "Failed to marshal JSON. %v", err)
+
+	_, err = restClient.Patch(types.MergePatchType).
+		AbsPath("/apis/apiregistration.k8s.io/v1/apiservices/v1alpha1.wardle.example.com/status").
+		SetHeader("Accept", "application/json").
+		Body([]byte(payload)).
+		DoRaw(context.TODO())
+	framework.ExpectNoError(err, "Patch failed for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
+
+	ginkgo.By(fmt.Sprintf("APIService deleteCollection with labelSelector: %q", apiServiceLabelSelector))
 
 	err = aggrclient.ApiregistrationV1().APIServices().DeleteCollection(context.TODO(),
 		metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64(1)},
