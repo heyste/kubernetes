@@ -652,15 +652,25 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 		framework.Failf("failed to get back the correct flunders list %v from the dynamic client", unstructuredList)
 	}
 
+	ginkgo.By("Read v1alpha1.wardle.example.com /status before patching it")
+	statusContent, err = restClient.Get().
+		AbsPath("/apis/apiregistration.k8s.io/v1/apiservices/v1alpha1.wardle.example.com/status").
+		SetHeader("Accept", "application/json").DoRaw(ctx)
+	framework.ExpectNoError(err, "No response for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
+
+	var wardle *apiregistrationv1.APIService
+	err = json.Unmarshal([]byte(statusContent), &wardle)
+	framework.ExpectNoError(err, "Failed to process statusContent: %v | err: %v ", string(statusContent), err)
+
 	ginkgo.By("Patch APIService Status")
 	patch := apiregistrationv1.APIService{
 		Status: apiregistrationv1.APIServiceStatus{
-			Conditions: []apiregistrationv1.APIServiceCondition{
-				{
-					Type:   "StatusPatched",
-					Status: "True",
-				},
-			},
+			Conditions: append(wardle.Status.Conditions, apiregistrationv1.APIServiceCondition{
+				Type:    "StatusPatched",
+				Status:  "True",
+				Reason:  "E2E",
+				Message: "Set by e2e test",
+			}),
 		},
 	}
 	payload, err := json.Marshal(patch)
@@ -672,6 +682,28 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 		Body([]byte(payload)).
 		DoRaw(ctx)
 	framework.ExpectNoError(err, "Patch failed for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
+
+	ginkgo.By("Confirm that v1alpha1.wardle.example.com /status was patched")
+	statusContent, err = restClient.Get().
+		AbsPath("/apis/apiregistration.k8s.io/v1/apiservices/v1alpha1.wardle.example.com/status").
+		SetHeader("Accept", "application/json").DoRaw(ctx)
+	framework.ExpectNoError(err, "No response for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
+
+	err = json.Unmarshal([]byte(statusContent), &wardle)
+	framework.ExpectNoError(err, "Failed to process statusContent: %v | err: %v ", string(statusContent), err)
+
+	foundPatchedStatusCondition := false
+	for _, cond := range wardle.Status.Conditions {
+		if cond.Type == "StatusPatched" && cond.Reason == "E2E" && cond.Message == "Set by e2e test" {
+			framework.Logf("Found APIService %v with Labels: %v & Conditions: %v", wardle.ObjectMeta.Name, wardle.Labels, wardle.Status.Conditions)
+			foundPatchedStatusCondition = true
+			break
+		} else {
+			framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", wardle.ObjectMeta.Name, wardle.Labels, wardle.Status.Conditions)
+		}
+	}
+	framework.ExpectEqual(foundPatchedStatusCondition, true, "The patched status condition was not found. %#v", wardle.Status.Conditions)
+	framework.Logf("Found patched status condition for %s", wardle.ObjectMeta.Name)
 
 	ginkgo.By(fmt.Sprintf("APIService deleteCollection with labelSelector: %q", apiServiceLabelSelector))
 
