@@ -678,11 +678,11 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	foundPatchedStatusCondition := false
 	for _, cond := range wardle.Status.Conditions {
 		if cond.Type == "StatusPatched" && cond.Reason == "E2E" && cond.Message == "Set by e2e test" {
-			framework.Logf("Found APIService %v with Labels: %v & Conditions: %v", wardle.ObjectMeta.Name, wardle.Labels, wardle.Status.Conditions)
+			framework.Logf("Found APIService %v with Labels: %v & Conditions: %v", wardle.ObjectMeta.Name, wardle.Labels, cond)
 			foundPatchedStatusCondition = true
 			break
 		} else {
-			framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", wardle.ObjectMeta.Name, wardle.Labels, wardle.Status.Conditions)
+			framework.Logf("Observed APIService %v with Labels: %v & Conditions: %v", wardle.ObjectMeta.Name, wardle.Labels, cond)
 		}
 	}
 	framework.ExpectEqual(foundPatchedStatusCondition, true, "The patched status condition was not found. %#v", wardle.Status.Conditions)
