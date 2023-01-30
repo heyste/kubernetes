@@ -546,9 +546,10 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	framework.Logf("APIService labels: %v", patchedApiService.Labels)
 
 	ginkgo.By("Updating APIService Status")
-	var statusToUpdate, updatedStatus, wardle *apiregistrationv1.APIService
+	var updatedStatus, wardle *apiregistrationv1.APIService
 
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var statusToUpdate *apiregistrationv1.APIService
 		statusContent, err = restClient.Get().
 			AbsPath("/apis/apiregistration.k8s.io/v1/apiservices/v1alpha1.wardle.example.com/status").
 			SetHeader("Accept", "application/json").DoRaw(ctx)
@@ -642,13 +643,14 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 		SetHeader("Accept", "application/json").DoRaw(ctx)
 	framework.ExpectNoError(err, "No response for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
 
+	wardle.Reset()
 	err = json.Unmarshal([]byte(statusContent), &wardle)
 	framework.ExpectNoError(err, "Failed to process statusContent: %v | err: %v ", string(statusContent), err)
 
 	ginkgo.By("Patch APIService Status")
-	patch := apiregistrationv1.APIService{
-		Status: apiregistrationv1.APIServiceStatus{
-			Conditions: append(wardle.Status.Conditions, apiregistrationv1.APIServiceCondition{
+	patch := map[string]interface{}{
+		"status": map[string]interface{}{
+			"conditions": append(wardle.Status.Conditions, apiregistrationv1.APIServiceCondition{
 				Type:    "StatusPatched",
 				Status:  "True",
 				Reason:  "E2E",
@@ -672,6 +674,7 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 		SetHeader("Accept", "application/json").DoRaw(ctx)
 	framework.ExpectNoError(err, "No response for .../apiservices/v1alpha1.wardle.example.com/status. Error: %v", err)
 
+	wardle.Reset()
 	err = json.Unmarshal([]byte(statusContent), &wardle)
 	framework.ExpectNoError(err, "Failed to process statusContent: %v | err: %v ", string(statusContent), err)
 
@@ -691,8 +694,8 @@ func TestSampleAPIServer(ctx context.Context, f *framework.Framework, aggrclient
 	ginkgo.By(fmt.Sprintf("APIService deleteCollection with labelSelector: %q", apiServiceLabelSelector))
 
 	err = aggrclient.ApiregistrationV1().APIServices().DeleteCollection(ctx,
-		metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64(1)},
-		metav1.ListOptions{LabelSelector: "apiservice=patched"})
+		metav1.DeleteOptions{},
+		metav1.ListOptions{LabelSelector: apiServiceLabelSelector})
 	framework.ExpectNoError(err, "Unable to delete apiservice %s", apiServiceName)
 
 	ginkgo.By("Confirm that the generated APIService has been deleted")
