@@ -18,6 +18,7 @@ package apimachinery
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -154,5 +155,94 @@ var _ = SIGDescribe("Discovery", func() {
 			}
 			framework.ExpectEqual(true, match, "failed to find a valid version for PreferredVersion")
 		}
+	})
+
+	ginkgo.It("tkt42", func(ctx context.Context) {
+
+		tests := []struct {
+			apiBasePath  string
+			apiResource  string
+			apiVersion   string
+			groupVersion string
+		}{
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "apps",
+				apiVersion:   "v1",
+				groupVersion: "apps/v1",
+			},
+
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "apiregistration.k8s.io",
+				apiVersion:   "v1",
+				groupVersion: "apiregistration.k8s.io/v1",
+			},
+
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "authentication.k8s.io",
+				apiVersion:   "v1",
+				groupVersion: "authentication.k8s.io/v1",
+			},
+
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "authorization.k8s.io",
+				apiVersion:   "v1",
+				groupVersion: "authorization.k8s.io/v1",
+			},
+
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "batch",
+				apiVersion:   "v1",
+				groupVersion: "batch/v1",
+			},
+
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "coordination.k8s.io",
+				apiVersion:   "v1",
+				groupVersion: "coordination.k8s.io/v1",
+			},
+
+			{
+				apiBasePath: "/api",
+				apiResource: "",
+				apiVersion:  "v1",
+			},
+
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "events.k8s.io",
+				apiVersion:   "v1",
+				groupVersion: "events.k8s.io/v1",
+			},
+
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "policy",
+				apiVersion:   "v1",
+				groupVersion: "policy/v1",
+			},
+
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "scheduling.k8s.io",
+				apiVersion:   "v1",
+				groupVersion: "scheduling.k8s.io/v1",
+			},
+		}
+
+		for _, t := range tests {
+			resourceList := &metav1.APIResourceList{}
+			apiPath := t.apiBasePath + t.apiResource + "/" + t.apiVersion
+			ginkgo.By(fmt.Sprintf("Requesting APIResourceList from %q ", apiPath))
+			err := f.ClientSet.Discovery().RESTClient().Get().AbsPath(apiPath).Do(ctx).Into(resourceList)
+			framework.ExpectNoError(err, "Fail to access: %s", apiPath)
+			framework.Logf("%#v", resourceList)
+		}
+
 	})
 })
