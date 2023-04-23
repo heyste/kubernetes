@@ -171,62 +171,65 @@ var _ = SIGDescribe("Discovery", func() {
 				apiVersion:   "v1",
 				groupVersion: "apps/v1",
 			},
-
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "autoscaling",
+				apiVersion:   "v1",
+				groupVersion: "autoscaling/v1",
+			},
+			{
+				apiBasePath:  "/apis/",
+				apiResource:  "autoscaling",
+				apiVersion:   "v2",
+				groupVersion: "autoscaling/v2",
+			},
 			{
 				apiBasePath:  "/apis/",
 				apiResource:  "apiregistration.k8s.io",
 				apiVersion:   "v1",
 				groupVersion: "apiregistration.k8s.io/v1",
 			},
-
 			{
 				apiBasePath:  "/apis/",
 				apiResource:  "authentication.k8s.io",
 				apiVersion:   "v1",
 				groupVersion: "authentication.k8s.io/v1",
 			},
-
 			{
 				apiBasePath:  "/apis/",
 				apiResource:  "authorization.k8s.io",
 				apiVersion:   "v1",
 				groupVersion: "authorization.k8s.io/v1",
 			},
-
 			{
 				apiBasePath:  "/apis/",
 				apiResource:  "batch",
 				apiVersion:   "v1",
 				groupVersion: "batch/v1",
 			},
-
 			{
 				apiBasePath:  "/apis/",
 				apiResource:  "coordination.k8s.io",
 				apiVersion:   "v1",
 				groupVersion: "coordination.k8s.io/v1",
 			},
-
 			{
 				apiBasePath: "/api",
 				apiResource: "",
 				apiVersion:  "v1",
 			},
-
 			{
 				apiBasePath:  "/apis/",
 				apiResource:  "events.k8s.io",
 				apiVersion:   "v1",
 				groupVersion: "events.k8s.io/v1",
 			},
-
 			{
 				apiBasePath:  "/apis/",
 				apiResource:  "policy",
 				apiVersion:   "v1",
 				groupVersion: "policy/v1",
 			},
-
 			{
 				apiBasePath:  "/apis/",
 				apiResource:  "scheduling.k8s.io",
@@ -243,6 +246,5 @@ var _ = SIGDescribe("Discovery", func() {
 			framework.ExpectNoError(err, "Fail to access: %s", apiPath)
 			framework.Logf("%#v", resourceList)
 		}
-
 	})
 })
