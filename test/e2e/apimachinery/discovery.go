@@ -32,6 +32,7 @@ import (
 	admissionapi "k8s.io/pod-security-admission/api"
 
 	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
 var storageVersionServerVersion = utilversion.MustParseSemantic("v1.13.99")
@@ -160,91 +161,118 @@ var _ = SIGDescribe("Discovery", func() {
 	ginkgo.It("tkt42", func(ctx context.Context) {
 
 		tests := []struct {
-			apiBasePath  string
-			apiResource  string
-			apiVersion   string
-			groupVersion string
+			apiBasePath   string
+			apiResource   string
+			apiVersion    string
+			groupVersion  string
+			validResource string
 		}{
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "apps",
-				apiVersion:   "v1",
-				groupVersion: "apps/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "apps",
+				apiVersion:    "v1",
+				groupVersion:  "apps/v1",
+				validResource: "deployments",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "autoscaling",
-				apiVersion:   "v1",
-				groupVersion: "autoscaling/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "autoscaling",
+				apiVersion:    "v1",
+				groupVersion:  "autoscaling/v1",
+				validResource: "horizontalpodautoscalers",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "autoscaling",
-				apiVersion:   "v2",
-				groupVersion: "autoscaling/v2",
+				apiBasePath:   "/apis/",
+				apiResource:   "autoscaling",
+				apiVersion:    "v2",
+				groupVersion:  "autoscaling/v2",
+				validResource: "horizontalpodautoscalers",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "apiregistration.k8s.io",
-				apiVersion:   "v1",
-				groupVersion: "apiregistration.k8s.io/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "apiregistration.k8s.io",
+				apiVersion:    "v1",
+				groupVersion:  "apiregistration.k8s.io/v1",
+				validResource: "apiservices",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "authentication.k8s.io",
-				apiVersion:   "v1",
-				groupVersion: "authentication.k8s.io/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "authentication.k8s.io",
+				apiVersion:    "v1",
+				groupVersion:  "authentication.k8s.io/v1",
+				validResource: "tokenreviews",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "authorization.k8s.io",
-				apiVersion:   "v1",
-				groupVersion: "authorization.k8s.io/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "authorization.k8s.io",
+				apiVersion:    "v1",
+				groupVersion:  "authorization.k8s.io/v1",
+				validResource: "selfsubjectaccessreviews",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "batch",
-				apiVersion:   "v1",
-				groupVersion: "batch/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "batch",
+				apiVersion:    "v1",
+				groupVersion:  "batch/v1",
+				validResource: "jobs",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "coordination.k8s.io",
-				apiVersion:   "v1",
-				groupVersion: "coordination.k8s.io/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "coordination.k8s.io",
+				apiVersion:    "v1",
+				groupVersion:  "coordination.k8s.io/v1",
+				validResource: "leases",
 			},
 			{
-				apiBasePath: "/api",
-				apiResource: "",
-				apiVersion:  "v1",
+				apiBasePath:   "/api",
+				apiResource:   "",
+				apiVersion:    "v1",
+				groupVersion:  "v1",
+				validResource: "namespaces",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "events.k8s.io",
-				apiVersion:   "v1",
-				groupVersion: "events.k8s.io/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "events.k8s.io",
+				apiVersion:    "v1",
+				groupVersion:  "events.k8s.io/v1",
+				validResource: "events",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "policy",
-				apiVersion:   "v1",
-				groupVersion: "policy/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "policy",
+				apiVersion:    "v1",
+				groupVersion:  "policy/v1",
+				validResource: "poddisruptionbudgets",
 			},
 			{
-				apiBasePath:  "/apis/",
-				apiResource:  "scheduling.k8s.io",
-				apiVersion:   "v1",
-				groupVersion: "scheduling.k8s.io/v1",
+				apiBasePath:   "/apis/",
+				apiResource:   "scheduling.k8s.io",
+				apiVersion:    "v1",
+				groupVersion:  "scheduling.k8s.io/v1",
+				validResource: "priorityclasses",
 			},
 		}
 
 		for _, t := range tests {
 			resourceList := &metav1.APIResourceList{}
 			apiPath := t.apiBasePath + t.apiResource + "/" + t.apiVersion
-			ginkgo.By(fmt.Sprintf("Requesting APIResourceList from %q ", apiPath))
+			ginkgo.By(fmt.Sprintf("Requesting APIResourceList from %q", apiPath))
 			err := f.ClientSet.Discovery().RESTClient().Get().AbsPath(apiPath).Do(ctx).Into(resourceList)
 			framework.ExpectNoError(err, "Fail to access: %s", apiPath)
-			framework.Logf("%#v", resourceList)
+			gomega.Expect(resourceList.GroupVersion).To(gomega.Equal(t.groupVersion))
+
+			apiResource := resourceList.APIResources
+			resourceFound := false
+
+			for _, resource := range apiResource {
+				framework.Logf("Resource: %#v", resource.Name)
+				framework.Logf("validResource: %#v", t.validResource)
+				if t.validResource == resource.Name {
+					resourceFound = true
+					break
+				}
+			}
+			gomega.Expect(resourceFound).To(gomega.Equal(true))
 		}
 	})
 })
