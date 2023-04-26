@@ -158,7 +158,7 @@ var _ = SIGDescribe("Discovery", func() {
 		}
 	})
 
-	ginkgo.It("tkt42", func(ctx context.Context) {
+	ginkgo.It("should locate the groupVersion and a resource within each APIResource", func(ctx context.Context) {
 
 		tests := []struct {
 			apiBasePath   string
@@ -261,18 +261,14 @@ var _ = SIGDescribe("Discovery", func() {
 			framework.ExpectNoError(err, "Fail to access: %s", apiPath)
 			gomega.Expect(resourceList.GroupVersion).To(gomega.Equal(t.groupVersion))
 
-			apiResource := resourceList.APIResources
-			resourceFound := false
-
-			for _, resource := range apiResource {
-				framework.Logf("Resource: %#v", resource.Name)
-				framework.Logf("validResource: %#v", t.validResource)
-				if t.validResource == resource.Name {
-					resourceFound = true
+			foundResource := false
+			for _, r := range resourceList.APIResources {
+				if t.validResource == r.Name {
+					foundResource = true
 					break
 				}
 			}
-			gomega.Expect(resourceFound).To(gomega.Equal(true))
+			gomega.Expect(foundResource).To(gomega.Equal(true))
 		}
 	})
 })
