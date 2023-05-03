@@ -22,6 +22,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -79,5 +80,50 @@ var _ = SIGDescribe("Ephemeral Containers [NodeConformance]", func() {
 		log, err := e2epod.GetPodLogs(ctx, f.ClientSet, pod.Namespace, pod.Name, ecName)
 		framework.ExpectNoError(err, "Failed to get logs for pod %q ephemeral container %q", e2epod.FormatPod(pod), ecName)
 		gomega.Expect(log).To(gomega.ContainSubstring("polo"))
+	})
+
+	ginkgo.It("should replace an existing ephemeral container in an existing pod", func(ctx context.Context) {
+		ginkgo.By("creating a target pod")
+		pod := podClient.CreateSync(ctx, &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "ephemeral-containers-target-pod"},
+			Spec: v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:    "test-container-1",
+						Image:   imageutils.GetE2EImage(imageutils.BusyBox),
+						Command: []string{"/bin/sleep"},
+						Args:    []string{"10000"},
+					},
+				},
+			},
+		})
+
+		ginkgo.By("adding an ephemeral container")
+		ecName := "debugger"
+		ec := &v1.EphemeralContainer{
+			EphemeralContainerCommon: v1.EphemeralContainerCommon{
+				Name:    ecName,
+				Image:   imageutils.GetE2EImage(imageutils.BusyBox),
+				Command: e2epod.GenerateScriptCmd("while true; do echo polo; sleep 2; done"),
+				Stdin:   true,
+				TTY:     true,
+			},
+		}
+		err := podClient.AddEphemeralContainerSync(ctx, pod, ec, time.Minute)
+		framework.ExpectNoError(err, "Failed to patch ephemeral containers in pod %q", e2epod.FormatPod(pod))
+
+		ginkgo.By("checking pod container endpoints")
+		// Can't use anything depending on kubectl here because it's not available in the node test environment
+		output := e2epod.ExecCommandInContainer(f, pod.Name, ecName, "/bin/echo", "marco")
+		gomega.Expect(output).To(gomega.ContainSubstring("marco"))
+		log, err := e2epod.GetPodLogs(ctx, f.ClientSet, pod.Namespace, pod.Name, ecName)
+		framework.ExpectNoError(err, "Failed to get logs for pod %q ephemeral container %q", e2epod.FormatPod(pod), ecName)
+		gomega.Expect(log).To(gomega.ContainSubstring("polo"))
+
+		// readCoreV1NamespacedPodEphemeralcontainers
+		podResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
+		getEphemeralContainers, err := f.DynamicClient.Resource(podResource).Namespace(f.Namespace.Name).Get(ctx, "ephemeral-containers-target-pod", metav1.GetOptions{}, "ephemeralcontainers")
+		framework.ExpectNoError(err, "can't get ephermalcontainers: %#v", err)
+		framework.Logf("%#v", getEphemeralContainers)
 	})
 })
