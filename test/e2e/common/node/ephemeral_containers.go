@@ -18,11 +18,15 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	clientscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -83,7 +87,7 @@ var _ = SIGDescribe("Ephemeral Containers [NodeConformance]", func() {
 		gomega.Expect(log).To(gomega.ContainSubstring("polo"))
 	})
 
-	ginkgo.It("should replace an existing ephemeral container in an existing pod", func(ctx context.Context) {
+	ginkgo.It("should update the ephemeral containers in an existing pod", func(ctx context.Context) {
 		ginkgo.By("creating a target pod")
 		pod := podClient.CreateSync(ctx, &v1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "ephemeral-containers-target-pod"},
@@ -121,14 +125,16 @@ var _ = SIGDescribe("Ephemeral Containers [NodeConformance]", func() {
 		framework.ExpectNoError(err, "Failed to get logs for pod %q ephemeral container %q", e2epod.FormatPod(pod), ecName)
 		gomega.Expect(log).To(gomega.ContainSubstring("polo"))
 
-		// readCoreV1NamespacedPodEphemeralcontainers
+		ginkgo.By(fmt.Sprintf("checking pod %q has only one ephemeralcontainer", pod.Name))
 		podResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
-		getEphemeralContainers, err := f.DynamicClient.Resource(podResource).Namespace(f.Namespace.Name).Get(ctx, "ephemeral-containers-target-pod", metav1.GetOptions{}, "ephemeralcontainers")
+		unstruct, err := f.DynamicClient.Resource(podResource).Namespace(f.Namespace.Name).Get(ctx, "ephemeral-containers-target-pod", metav1.GetOptions{}, "ephemeralcontainers")
 		framework.ExpectNoError(err, "can't get ephermalcontainers: %#v", err)
-		framework.Logf("getEphemeralContainers:\n%#v", getEphemeralContainers)
+		verifyPod, err := unstructuredToPod(unstruct)
+		framework.ExpectNoError(err, "Getting the pod %q ephemeralcontainers", verifyPod.Name)
+		gomega.Expect(len(verifyPod.Spec.EphemeralContainers)).To(gomega.Equal(1), "checking ephemeralContainer count")
 
-		// replaceCoreV1NamespacedPodEphemeralcontainers
-		var podToUpdate, updatedPod *v1.Pod
+		ginkgo.By(fmt.Sprintf("adding another ephemeralcontainer to pod %q", pod.Name))
+		var podToUpdate *v1.Pod
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			podToUpdate, err = podClient.Get(ctx, pod.Name, metav1.GetOptions{})
 			framework.ExpectNoError(err, "Unable to retrieve pod %s", pod.Name)
@@ -137,18 +143,31 @@ var _ = SIGDescribe("Ephemeral Containers [NodeConformance]", func() {
 				EphemeralContainerCommon: v1.EphemeralContainerCommon{
 					Name:                     "debugger2",
 					Image:                    imageutils.GetE2EImage(imageutils.Agnhost),
-					ImagePullPolicy:          "Always",
+					ImagePullPolicy:          "IfNotPresent",
 					TerminationMessagePolicy: "File",
 				},
 			})
-			updatedPod, err = podClient.UpdateEphemeralContainers(context.TODO(), pod.Name, podToUpdate, metav1.UpdateOptions{})
+			_, err = podClient.UpdateEphemeralContainers(context.TODO(), pod.Name, podToUpdate, metav1.UpdateOptions{})
 			return err
 		})
 		framework.ExpectNoError(err, "Failed to update status. %v", err)
-		framework.Logf("updatedPod.Spec.EphemeralContainers:\n%#v", updatedPod.Spec.EphemeralContainers)
 
-		getEphemeralContainers, err = f.DynamicClient.Resource(podResource).Namespace(f.Namespace.Name).Get(ctx, "ephemeral-containers-target-pod", metav1.GetOptions{}, "ephemeralcontainers")
+		ginkgo.By(fmt.Sprintf("checking pod %q has only two ephemeralcontainers", pod.Name))
+		unstruct, err = f.DynamicClient.Resource(podResource).Namespace(f.Namespace.Name).Get(ctx, "ephemeral-containers-target-pod", metav1.GetOptions{}, "ephemeralcontainers")
 		framework.ExpectNoError(err, "can't get ephermalcontainers: %#v", err)
-		framework.Logf("getEphemeralContainers:\n%#v", getEphemeralContainers)
+		verifyPod, err = unstructuredToPod(unstruct)
+		framework.ExpectNoError(err, "Getting the pod %q ephemeralcontainers", verifyPod.Name)
+		gomega.Expect(len(verifyPod.Spec.EphemeralContainers)).To(gomega.Equal(2), "checking ephemeralContainer count")
 	})
 })
+
+func unstructuredToPod(obj *unstructured.Unstructured) (*v1.Pod, error) {
+	json, err := runtime.Encode(unstructured.UnstructuredJSONScheme, obj)
+	if err != nil {
+		return nil, err
+	}
+	p := &v1.Pod{}
+	err = runtime.DecodeInto(clientscheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), json, p)
+
+	return p, err
+}
