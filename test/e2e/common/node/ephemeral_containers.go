@@ -23,6 +23,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -124,6 +125,30 @@ var _ = SIGDescribe("Ephemeral Containers [NodeConformance]", func() {
 		podResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
 		getEphemeralContainers, err := f.DynamicClient.Resource(podResource).Namespace(f.Namespace.Name).Get(ctx, "ephemeral-containers-target-pod", metav1.GetOptions{}, "ephemeralcontainers")
 		framework.ExpectNoError(err, "can't get ephermalcontainers: %#v", err)
-		framework.Logf("%#v", getEphemeralContainers)
+		framework.Logf("getEphemeralContainers:\n%#v", getEphemeralContainers)
+
+		// replaceCoreV1NamespacedPodEphemeralcontainers
+		var podToUpdate, updatedPod *v1.Pod
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			podToUpdate, err = podClient.Get(ctx, pod.Name, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to retrieve pod %s", pod.Name)
+
+			podToUpdate.Spec.EphemeralContainers = append(podToUpdate.Spec.EphemeralContainers, v1.EphemeralContainer{
+				EphemeralContainerCommon: v1.EphemeralContainerCommon{
+					Name:                     "debugger2",
+					Image:                    imageutils.GetE2EImage(imageutils.Agnhost),
+					ImagePullPolicy:          "Always",
+					TerminationMessagePolicy: "File",
+				},
+			})
+			updatedPod, err = podClient.UpdateEphemeralContainers(context.TODO(), pod.Name, podToUpdate, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err, "Failed to update status. %v", err)
+		framework.Logf("updatedPod.Spec.EphemeralContainers:\n%#v", updatedPod.Spec.EphemeralContainers)
+
+		getEphemeralContainers, err = f.DynamicClient.Resource(podResource).Namespace(f.Namespace.Name).Get(ctx, "ephemeral-containers-target-pod", metav1.GetOptions{}, "ephemeralcontainers")
+		framework.ExpectNoError(err, "can't get ephermalcontainers: %#v", err)
+		framework.Logf("getEphemeralContainers:\n%#v", getEphemeralContainers)
 	})
 })
