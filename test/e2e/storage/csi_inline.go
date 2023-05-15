@@ -31,6 +31,7 @@ import (
 	admissionapi "k8s.io/pod-security-admission/api"
 
 	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
 var _ = utils.SIGDescribe("CSIInlineVolumes", func() {
@@ -223,6 +224,87 @@ var _ = utils.SIGDescribe("CSIInlineVolumes", func() {
 			// Okay, normal case.
 		default:
 			framework.Failf("Pod should have been deleted or have DeletionTimestamp, but instead got: %s", retrievedPod)
+		}
+	})
+
+	ginkgo.It("tkt48", func(ctx context.Context) {
+		// Create client
+		client := f.ClientSet.StorageV1().CSIDrivers()
+		defaultFSGroupPolicy := storagev1.ReadWriteOnceWithFSTypeFSGroupPolicy
+
+		// Driver that supports only Ephemeral
+		driver1 := &storagev1.CSIDriver{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "inline-driver-" + string(uuid.NewUUID()),
+				Labels: map[string]string{
+					"test": f.UniqueName,
+				},
+			},
+
+			Spec: storagev1.CSIDriverSpec{
+				VolumeLifecycleModes: []storagev1.VolumeLifecycleMode{storagev1.VolumeLifecycleEphemeral},
+				FSGroupPolicy:        &defaultFSGroupPolicy,
+			},
+		}
+
+		// Driver that supports both Ephemeral and Persistent
+		driver2 := &storagev1.CSIDriver{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "inline-driver-" + string(uuid.NewUUID()),
+				Labels: map[string]string{
+					"test": f.UniqueName,
+				},
+			},
+
+			Spec: storagev1.CSIDriverSpec{
+				VolumeLifecycleModes: []storagev1.VolumeLifecycleMode{
+					storagev1.VolumeLifecyclePersistent,
+					storagev1.VolumeLifecycleEphemeral,
+				},
+				FSGroupPolicy: &defaultFSGroupPolicy,
+			},
+		}
+
+		ginkgo.By("creating")
+		createdDriver1, err := client.Create(ctx, driver1, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		createdDriver2, err := client.Create(ctx, driver2, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		_, err = client.Create(ctx, driver1, metav1.CreateOptions{})
+		if !apierrors.IsAlreadyExists(err) {
+			framework.Failf("expected 409, got %#v", err)
+		}
+
+		ginkgo.By("getting")
+		retrievedDriver1, err := client.Get(ctx, createdDriver1.Name, metav1.GetOptions{})
+		framework.ExpectNoError(err)
+		gomega.Expect(retrievedDriver1.UID).To(gomega.Equal(createdDriver1.UID))
+
+		retrievedDriver2, err := client.Get(ctx, createdDriver2.Name, metav1.GetOptions{})
+		framework.ExpectNoError(err)
+		gomega.Expect(retrievedDriver2.UID).To(gomega.Equal(createdDriver2.UID))
+
+		ginkgo.By("listing")
+		driverList, err := client.List(ctx, metav1.ListOptions{LabelSelector: "test=" + f.UniqueName})
+		framework.ExpectNoError(err)
+		gomega.Expect(driverList.Items).To(gomega.HaveLen(2), "filtered list should have 2 items, got: %s", driverList)
+
+		ginkgo.By("deleting collection")
+		err = client.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "test=" + f.UniqueName})
+
+		framework.ExpectNoError(err)
+		for _, driver := range driverList.Items {
+			retrievedDriver, err := client.Get(ctx, driver.Name, metav1.GetOptions{})
+			switch {
+			case apierrors.IsNotFound(err):
+				// Okay, normal case.
+			case err != nil:
+				framework.Failf("expected 404, got %#v", err)
+			case retrievedDriver.DeletionTimestamp != nil:
+				// Okay, normal case.
+			default:
+				framework.Failf("CSIDriver should have been deleted or have DeletionTimestamp, but instead got: %s", retrievedDriver)
+			}
 		}
 	})
 })
