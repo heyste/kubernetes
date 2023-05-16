@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -290,6 +291,20 @@ var _ = utils.SIGDescribe("CSIInlineVolumes", func() {
 		framework.ExpectNoError(err, "failed to patch CSIDriver %q", createdDriver2.Name)
 		framework.Logf("patchedDriver:\n%#v", patchedCSIDriver)
 		framework.Logf("retrievedDriver2:\n%#v", retrievedDriver2)
+
+		ginkgo.By("Updating the CSIDriver")
+		var updatedCSIDriver *storagev1.CSIDriver
+
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			csiDriver, err := client.Get(ctx, createdDriver2.Name, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Unable to get CSIDriver %q", createdDriver2.Name)
+			patchedCSIDriver.Labels[retrievedDriver2.Name] = "updated"
+			updatedCSIDriver, err = client.Update(ctx, csiDriver, metav1.UpdateOptions{})
+
+			return err
+		})
+		framework.ExpectNoError(err, "failed to update CSIDriver %q", createdDriver2.Name)
+		gomega.Expect(updatedCSIDriver.Labels[createdDriver2.Name]).To(gomega.ContainSubstring("updated"), "Checking that updated label has been applied")
 
 		ginkgo.By("listing")
 		driverList, err := client.List(ctx, metav1.ListOptions{LabelSelector: "test=" + f.UniqueName})
