@@ -284,6 +284,13 @@ var _ = utils.SIGDescribe("CSIInlineVolumes", func() {
 		framework.ExpectNoError(err)
 		gomega.Expect(retrievedDriver2.UID).To(gomega.Equal(createdDriver2.UID))
 
+		ginkgo.By("Patching the CSIDriver")
+		payload := "{\"metadata\":{\"labels\":{\"" + createdDriver2.Name + "\":\"patched\"}}}"
+		patchedCSIDriver, err := client.Patch(ctx, createdDriver2.Name, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
+		framework.ExpectNoError(err, "failed to patch CSIDriver %q", createdDriver2.Name)
+		framework.Logf("patchedDriver:\n%#v", patchedCSIDriver)
+		framework.Logf("retrievedDriver2:\n%#v", retrievedDriver2)
+
 		ginkgo.By("listing")
 		driverList, err := client.List(ctx, metav1.ListOptions{LabelSelector: "test=" + f.UniqueName})
 		framework.ExpectNoError(err)
