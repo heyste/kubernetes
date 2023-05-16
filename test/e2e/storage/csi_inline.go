@@ -18,6 +18,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -232,13 +233,14 @@ var _ = utils.SIGDescribe("CSIInlineVolumes", func() {
 		// Create client
 		client := f.ClientSet.StorageV1().CSIDrivers()
 		defaultFSGroupPolicy := storagev1.ReadWriteOnceWithFSTypeFSGroupPolicy
+		csiDriverLabelSelector := "e2e-test=" + f.UniqueName
 
 		// Driver that supports only Ephemeral
 		driver1 := &storagev1.CSIDriver{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "inline-driver-" + string(uuid.NewUUID()),
 				Labels: map[string]string{
-					"test": f.UniqueName,
+					"e2e-test": f.UniqueName,
 				},
 			},
 
@@ -253,7 +255,7 @@ var _ = utils.SIGDescribe("CSIInlineVolumes", func() {
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "inline-driver-" + string(uuid.NewUUID()),
 				Labels: map[string]string{
-					"test": f.UniqueName,
+					"e2e-test": f.UniqueName,
 				},
 			},
 
@@ -305,27 +307,41 @@ var _ = utils.SIGDescribe("CSIInlineVolumes", func() {
 		framework.ExpectNoError(err, "failed to update CSIDriver %q", createdDriver2.Name)
 		gomega.Expect(updatedCSIDriver.Labels[createdDriver2.Name]).To(gomega.ContainSubstring("updated"), "Checking that updated label has been applied")
 
-		ginkgo.By("listing")
-		driverList, err := client.List(ctx, metav1.ListOptions{LabelSelector: "test=" + f.UniqueName})
+		ginkgo.By(fmt.Sprintf("listing all CSIDrivers with the labelSelector: %q", csiDriverLabelSelector))
+		driverList, err := client.List(ctx, metav1.ListOptions{LabelSelector: csiDriverLabelSelector})
 		framework.ExpectNoError(err)
 		gomega.Expect(driverList.Items).To(gomega.HaveLen(2), "filtered list should have 2 items, got: %s", driverList)
 
-		ginkgo.By("deleting collection")
-		err = client.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "test=" + f.UniqueName})
+		ginkgo.By(fmt.Sprintf("deleting csiDriver %q", createdDriver1.Name))
+		err = client.Delete(ctx, createdDriver1.Name, metav1.DeleteOptions{})
+		framework.ExpectNoError(err)
+		retrievedDriver, err := client.Get(ctx, createdDriver1.Name, metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(err):
+			// Okay, normal case.
+		case err != nil:
+			framework.Failf("expected 404, got %#v", err)
+		case retrievedDriver.DeletionTimestamp != nil:
+			// Okay, normal case.
+		default:
+			framework.Failf("CSIDriver should have been deleted or have DeletionTimestamp, but instead got: %s", retrievedDriver)
+		}
+
+		ginkgo.By(fmt.Sprintf("deleting csiDriver %q via DeleteCollection", createdDriver2.Name))
+		framework.Logf("labelSelector: %s", f.UniqueName+"=updated")
+		err = client.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: createdDriver2.Name + "=updated"})
 
 		framework.ExpectNoError(err)
-		for _, driver := range driverList.Items {
-			retrievedDriver, err := client.Get(ctx, driver.Name, metav1.GetOptions{})
-			switch {
-			case apierrors.IsNotFound(err):
-				// Okay, normal case.
-			case err != nil:
-				framework.Failf("expected 404, got %#v", err)
-			case retrievedDriver.DeletionTimestamp != nil:
-				// Okay, normal case.
-			default:
-				framework.Failf("CSIDriver should have been deleted or have DeletionTimestamp, but instead got: %s", retrievedDriver)
-			}
+		retrievedDriver, err = client.Get(ctx, createdDriver2.Name, metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(err):
+			// Okay, normal case.
+		case err != nil:
+			framework.Failf("expected 404, got %#v", err)
+		case retrievedDriver.DeletionTimestamp != nil:
+			// Okay, normal case.
+		default:
+			framework.Failf("CSIDriver should have been deleted or have DeletionTimestamp, but instead got: %s", retrievedDriver)
 		}
 	})
 })
