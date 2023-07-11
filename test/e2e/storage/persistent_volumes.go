@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onsi/ginkgo/v2"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	types "k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -37,6 +37,9 @@ import (
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	admissionapi "k8s.io/pod-security-admission/api"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 )
 
 // Validate PV/PVC, create and verify writer pod, delete the PVC, and validate the PV's
@@ -316,6 +319,100 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 				framework.ExpectNoError(e2epv.DeletePVCandValidatePV(ctx, c, f.Timeouts, ns, pvc, pv, v1.VolumeAvailable))
 				pvc = nil
 			})
+		})
+	})
+
+	ginkgo.Describe("Conformance", func() {
+		ginkgo.It("should run through the lifecycle of a PV and a PVC", func(ctx context.Context) {
+
+			pvClient := c.CoreV1().PersistentVolumes()
+			pvcClient := c.CoreV1().PersistentVolumeClaims(ns)
+
+			ginkgo.By("Create a PV and a PVC")
+
+			// Driver that supports both Ephemeral and Persistent
+			// defaultFSGroupPolicy := storagev1.ReadWriteOnceWithFSTypeFSGroupPolicy
+			// csiDriverLabel := map[string]string{"e2e-test": f.UniqueName}
+			// csiDriver := &storagev1.CSIDriver{
+			// 	ObjectMeta: metav1.ObjectMeta{
+			// 		Name:   "inline-driver-" + string(uuid.NewUUID()),
+			// 		Labels: csiDriverLabel,
+			// 	},
+
+			// 	Spec: storagev1.CSIDriverSpec{
+			// 		VolumeLifecycleModes: []storagev1.VolumeLifecycleMode{
+			// 			storagev1.VolumeLifecyclePersistent,
+			// 			storagev1.VolumeLifecycleEphemeral,
+			// 		},
+			// 		FSGroupPolicy: &defaultFSGroupPolicy,
+			// 	},
+			// }
+
+			pvNamePrefix := ns + "-"
+			pvHostPathConfig := e2epv.PersistentVolumeConfig{
+				NamePrefix: pvNamePrefix,
+				Labels:     volLabel,
+				PVSource: v1.PersistentVolumeSource{
+					// CSI: &v1.CSIPersistentVolumeSource{
+					// 	Driver: csiDriver.Name,
+					// },
+
+					HostPath: &v1.HostPathVolumeSource{
+						Path: "/tmp/exports",
+					},
+				},
+			}
+			framework.Logf("pvHostPathConfig: %#v", pvHostPathConfig)
+
+			numPVs, numPVCs := 1, 1
+			pvols, claims, err := e2epv.CreatePVsPVCs(ctx, numPVs, numPVCs, c, f.Timeouts, ns, pvHostPathConfig, pvcConfig)
+			framework.ExpectNoError(err)
+			framework.Logf("pv: %#v", pvols)
+			framework.Logf("pvc: %#v", claims)
+
+			ginkgo.By("List PV")
+
+			pvList, err := pvClient.List(ctx, metav1.ListOptions{LabelSelector: volLabel.AsSelector().String()})
+			framework.ExpectNoError(err)
+			framework.Logf("pvList: %#v", pvList)
+			gomega.Expect(pvList.Items).To(gomega.HaveLen(1))
+
+			ginkgo.By("List PVC")
+
+			pvcList, err := pvcClient.List(ctx, metav1.ListOptions{})
+			framework.ExpectNoError(err)
+			framework.Logf("pvcList: %#v", pvcList)
+			gomega.Expect(pvcList.Items).To(gomega.HaveLen(1))
+
+			ginkgo.By("Patch PV")
+
+			payload := "{\"metadata\":{\"labels\":{\"" + pvList.Items[0].Name + "\":\"patched\"}}}"
+			patchedPV, err := pvClient.Patch(ctx, pvList.Items[0].Name, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
+			framework.ExpectNoError(err)
+			framework.Logf("patchedPV: %#v", patchedPV)
+			gomega.Expect(patchedPV.Labels[patchedPV.Name]).To(gomega.ContainSubstring("patched"), "Checking that patched label has been applied")
+
+			ginkgo.By("Patch PVC")
+
+			payload = "{\"metadata\":{\"labels\":{\"" + pvcList.Items[0].Name + "\":\"patched\"}}}"
+			patchedPVC, err := pvcClient.Patch(ctx, pvcList.Items[0].Name, types.StrategicMergePatchType, []byte(payload), metav1.PatchOptions{})
+			framework.ExpectNoError(err)
+			framework.Logf("patchedPVC: %#v", patchedPVC)
+			gomega.Expect(patchedPVC.Labels[patchedPVC.Name]).To(gomega.ContainSubstring("patched"), "Checking that patched label has been applied")
+
+			ginkgo.By("Get PV")
+
+			retrievedPV, err := pvClient.Get(ctx, pvList.Items[0].Name, metav1.GetOptions{})
+			framework.ExpectNoError(err)
+			framework.Logf("retrievedPV: %#v", retrievedPV)
+			gomega.Expect(retrievedPV.UID).To(gomega.Equal(pvList.Items[0].UID))
+
+			ginkgo.By("Get PVC")
+
+			retrievedPVC, err := pvcClient.Get(ctx, pvcList.Items[0].Name, metav1.GetOptions{})
+			framework.ExpectNoError(err)
+			framework.Logf("retrievedPVC: %#v", retrievedPVC)
+			gomega.Expect(retrievedPVC.UID).To(gomega.Equal(pvcList.Items[0].UID))
 		})
 	})
 
