@@ -328,20 +328,20 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 
 	ginkgo.Describe("CSI Conformance", func() {
 
-		// var pvols e2epv.PVMap
-		// var claims e2epv.PVCMap
+		var pvols e2epv.PVMap
+		var claims e2epv.PVCMap
 
-		// ginkgo.AfterEach(func(ctx context.Context) {
-		// 	framework.Logf("AfterEach: deleting %v PVCs and %v PVs...", len(claims), len(pvols))
-		// 	errs := e2epv.PVPVCMapCleanup(ctx, c, ns, pvols, claims)
-		// 	if len(errs) > 0 {
-		// 		errmsg := []string{}
-		// 		for _, e := range errs {
-		// 			errmsg = append(errmsg, e.Error())
-		// 		}
-		// 		framework.Failf("AfterEach: Failed to delete 1 or more PVs/PVCs. Errors: %v", strings.Join(errmsg, "; "))
-		// 	}
-		// })
+		ginkgo.AfterEach(func(ctx context.Context) {
+			framework.Logf("AfterEach: deleting %v PVCs and %v PVs...", len(claims), len(pvols))
+			errs := e2epv.PVPVCMapCleanup(ctx, c, ns, pvols, claims)
+			if len(errs) > 0 {
+				errmsg := []string{}
+				for _, e := range errs {
+					errmsg = append(errmsg, e.Error())
+				}
+				framework.Failf("AfterEach: Failed to delete 1 or more PVs/PVCs. Errors: %v", strings.Join(errmsg, "; "))
+			}
+		})
 
 		ginkgo.It("should run through the lifecycle of a PV and a PVC", func(ctx context.Context) {
 
@@ -380,7 +380,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			}
 
 			numPVs, numPVCs := 1, 1
-			_, _, err := e2epv.CreatePVsPVCs(ctx, numPVs, numPVCs, c, f.Timeouts, ns, pvHostPathConfig, pvcConfig)
+			pvols, claims, err = e2epv.CreatePVsPVCs(ctx, numPVs, numPVCs, c, f.Timeouts, ns, pvHostPathConfig, pvcConfig)
 			framework.ExpectNoError(err)
 
 			ginkgo.By(fmt.Sprintf("Listing all PVs with the labelSelector: %q", volLabel.AsSelector().String()))
@@ -450,7 +450,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Recreating another PV & PVC")
-			pvols, claims, err := e2epv.CreatePVsPVCs(ctx, numPVs, numPVCs, c, f.Timeouts, ns, pvHostPathConfig, pvcConfig)
+			pvols, claims, err = e2epv.CreatePVsPVCs(ctx, numPVs, numPVCs, c, f.Timeouts, ns, pvHostPathConfig, pvcConfig)
 			framework.ExpectNoError(err)
 
 			var pvName string
