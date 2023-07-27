@@ -467,6 +467,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 
 			ginkgo.By(fmt.Sprintf("Updating the PV %q", pvName))
 			var updatedPV *v1.PersistentVolume
+			pvSelector := labels.Set{pvName: "updated"}.AsSelector().String()
 
 			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 				pv, err := pvClient.Get(ctx, pvName, metav1.GetOptions{})
@@ -481,6 +482,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 
 			ginkgo.By(fmt.Sprintf("Updating the PVC %q", pvcName))
 			var updatedPVC *v1.PersistentVolumeClaim
+			pvcSelector := labels.Set{pvcName: "updated"}.AsSelector().String()
 
 			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 				pvc, err := pvcClient.Get(ctx, pvcName, metav1.GetOptions{})
@@ -495,18 +497,18 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			framework.ExpectNoError(err, "failed to update PVC %q", pvcName)
 			gomega.Expect(updatedPVC.Labels[pvcName]).To(gomega.ContainSubstring("updated"), "Checking that updated label has been applied")
 
-			ginkgo.By(fmt.Sprintf("Listing PVCs in all namespaces with the labelSelector: %q", pvcName+"=updated"))
-			pvcList, err = c.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{LabelSelector: pvcName + "=updated"})
-			framework.ExpectNoError(err, "Failed to list PVCs in all namespaces with the labelSelector: %q", pvcName+"=updated")
+			ginkgo.By(fmt.Sprintf("Listing PVCs in all namespaces with the labelSelector: %q", pvcSelector))
+			pvcList, err = c.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{LabelSelector: pvcSelector})
+			framework.ExpectNoError(err, "Failed to list PVCs in all namespaces with the labelSelector: %q", pvcSelector)
 			gomega.Expect(pvcList.Items).To(gomega.HaveLen(1))
 
 			ginkgo.By(fmt.Sprintf("Deleting PVC %q via DeleteCollection", pvcName))
-			err = pvcClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: pvcName + "=updated"})
+			err = pvcClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: pvcSelector})
 			framework.ExpectNoError(err, "Failed to delete PVC %q", retrievedPVC.Name)
 
 			ginkgo.By(fmt.Sprintf("Confirm deletion of PVC %q", pvcName))
 			err = wait.PollUntilContextTimeout(ctx, time.Second, f.Timeouts.PVDelete, false, func(ctx context.Context) (bool, error) {
-				pvcList, err := pvcClient.List(ctx, metav1.ListOptions{})
+				pvcList, err := pvcClient.List(ctx, metav1.ListOptions{LabelSelector: pvcSelector})
 				if err != nil {
 					return false, fmt.Errorf("failed to list pvc: %w", err)
 				}
@@ -518,12 +520,12 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			framework.ExpectNoError(err, "Timeout while waiting to confirm PVC %q deletion", pvcName)
 
 			ginkgo.By(fmt.Sprintf("Deleting PV %q via DeleteCollection", pvName))
-			err = pvClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "e2e-pv-pool=" + ns})
+			err = pvClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: pvSelector})
 			framework.ExpectNoError(err, "Failed to delete PV %q", retrievedPVC.Name)
 
 			ginkgo.By(fmt.Sprintf("Confirm deletion of PV %q", pvName))
 			err = wait.PollUntilContextTimeout(ctx, time.Second, f.Timeouts.PVDelete, false, func(ctx context.Context) (bool, error) {
-				pvList, err := pvClient.List(ctx, metav1.ListOptions{})
+				pvList, err := pvClient.List(ctx, metav1.ListOptions{LabelSelector: pvSelector})
 				if err != nil {
 					return false, fmt.Errorf("failed to list pv: %w", err)
 				}
