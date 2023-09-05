@@ -57,11 +57,11 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 
 			ginkgo.By("Creating a StorageClass")
 			createdStorageClass, err := scClient.Create(ctx, initialSC, metav1.CreateOptions{})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "Failed to create the requested StorageClass")
 
 			ginkgo.By(fmt.Sprintf("Get StorageClass %q", createdStorageClass.Name))
 			retrievedStorageClass, err := scClient.Get(ctx, createdStorageClass.Name, metav1.GetOptions{})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "Failed to get StorageClass %q", createdStorageClass.Name)
 
 			ginkgo.By(fmt.Sprintf("Patching the StorageClass %q", retrievedStorageClass.Name))
 			payload := "{\"metadata\":{\"labels\":{\"" + retrievedStorageClass.Name + "\":\"patched\"}}}"
@@ -71,7 +71,7 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 
 			ginkgo.By(fmt.Sprintf("Delete StorageClass %q", patchedStorageClass.Name))
 			err = scClient.Delete(ctx, patchedStorageClass.Name, metav1.DeleteOptions{})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "Failed to delete StorageClass %q", patchedStorageClass.Name)
 
 			ginkgo.By(fmt.Sprintf("Confirm deletion of StorageClass %q", patchedStorageClass.Name))
 
@@ -83,7 +83,7 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 			err = framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*state, error) {
 				scList, err := scClient.List(ctx, metav1.ListOptions{LabelSelector: scSelector})
 				if err != nil {
-					return nil, fmt.Errorf("failed to list StorageClass: %w", err)
+					return nil, fmt.Errorf("Failed to list StorageClass: %w", err)
 				}
 				return &state{
 					StorageClasses: scList.Items,
@@ -111,7 +111,7 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 			}
 
 			replacementStorageClass, err := scClient.Create(ctx, replacementSC, metav1.CreateOptions{})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "Failed to create replacement StorageClass")
 
 			ginkgo.By(fmt.Sprintf("Updating StorageClass %q", replacementStorageClass.Name))
 			var updatedStorageClass *storagev1.StorageClass
@@ -124,7 +124,7 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 
 				return err
 			})
-			framework.ExpectNoError(err, "failed to update StorageClass %q", replacementStorageClass.Name)
+			framework.ExpectNoError(err, "Failed to update StorageClass %q", replacementStorageClass.Name)
 			gomega.Expect(updatedStorageClass.Labels).To(gomega.HaveKeyWithValue(replacementStorageClass.Name, "updated"), "Checking that updated label has been applied")
 
 			scSelector = labels.Set{replacementStorageClass.Name: "updated"}.AsSelector().String()
@@ -142,7 +142,7 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 			err = framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*state, error) {
 				scList, err := scClient.List(ctx, metav1.ListOptions{LabelSelector: scSelector})
 				if err != nil {
-					return nil, fmt.Errorf("failed to list StorageClass: %w", err)
+					return nil, fmt.Errorf("Failed to list StorageClass: %w", err)
 				}
 				return &state{
 					StorageClasses: scList.Items,
