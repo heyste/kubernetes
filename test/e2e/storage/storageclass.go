@@ -19,6 +19,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -72,6 +73,31 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 			err = scClient.Delete(ctx, patchedStorageClass.Name, metav1.DeleteOptions{})
 			framework.ExpectNoError(err)
 
+			ginkgo.By(fmt.Sprintf("Confirm deletion of StorageClass %q", patchedStorageClass.Name))
+
+			scSelector := labels.Set{patchedStorageClass.Name: "patched"}.AsSelector().String()
+			type state struct {
+				StorageClasses []storagev1.StorageClass
+			}
+
+			err = framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*state, error) {
+				scList, err := scClient.List(ctx, metav1.ListOptions{LabelSelector: scSelector})
+				if err != nil {
+					return nil, fmt.Errorf("failed to list StorageClass: %w", err)
+				}
+				return &state{
+					StorageClasses: scList.Items,
+				}, nil
+			})).WithTimeout(30 * time.Second).Should(framework.MakeMatcher(func(s *state) (func() string, error) {
+				if len(s.StorageClasses) == 0 {
+					return nil, nil
+				}
+				return func() string {
+					return fmt.Sprintf("Expected StorageClass to be deleted, found %q", s.StorageClasses[0].Name)
+				}, nil
+			}))
+			framework.ExpectNoError(err, "Timeout while waiting to confirm StorageClass %q deletion", patchedStorageClass.Name)
+
 			ginkgo.By("Create a replacement StorageClass")
 
 			replacementSC = &storagev1.StorageClass{
@@ -101,7 +127,7 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 			framework.ExpectNoError(err, "failed to update StorageClass %q", replacementStorageClass.Name)
 			gomega.Expect(updatedStorageClass.Labels).To(gomega.HaveKeyWithValue(replacementStorageClass.Name, "updated"), "Checking that updated label has been applied")
 
-			scSelector := labels.Set{replacementStorageClass.Name: "updated"}.AsSelector().String()
+			scSelector = labels.Set{replacementStorageClass.Name: "updated"}.AsSelector().String()
 			ginkgo.By(fmt.Sprintf("Listing all StorageClass with the labelSelector: %q", scSelector))
 			scList, err := scClient.List(ctx, metav1.ListOptions{LabelSelector: scSelector})
 			framework.ExpectNoError(err, "Failed to list StorageClasses with the labelSelector: %q", scSelector)
@@ -110,6 +136,26 @@ var _ = utils.SIGDescribe("StorageClasses", func() {
 			ginkgo.By(fmt.Sprintf("Deleting StorageClass %q via DeleteCollection", updatedStorageClass.Name))
 			err = scClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: scSelector})
 			framework.ExpectNoError(err, "Failed to delete StorageClass %q", updatedStorageClass.Name)
+
+			ginkgo.By(fmt.Sprintf("Confirm deletion of StorageClass %q", updatedStorageClass.Name))
+
+			err = framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*state, error) {
+				scList, err := scClient.List(ctx, metav1.ListOptions{LabelSelector: scSelector})
+				if err != nil {
+					return nil, fmt.Errorf("failed to list StorageClass: %w", err)
+				}
+				return &state{
+					StorageClasses: scList.Items,
+				}, nil
+			})).WithTimeout(30 * time.Second).Should(framework.MakeMatcher(func(s *state) (func() string, error) {
+				if len(s.StorageClasses) == 0 {
+					return nil, nil
+				}
+				return func() string {
+					return fmt.Sprintf("Expected StorageClass to be deleted, found %q", s.StorageClasses[0].Name)
+				}, nil
+			}))
+			framework.ExpectNoError(err, "Timeout while waiting to confirm StorageClass %q deletion", updatedStorageClass.Name)
 		})
 	})
 })
