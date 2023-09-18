@@ -18,6 +18,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -646,6 +648,91 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			}))
 			framework.ExpectNoError(err, "Timeout while waiting to confirm PV %q deletion", retrievedPV.Name)
 		})
+
+		ginkgo.It("tkt59", func(ctx context.Context) {
+
+			pvClient := c.CoreV1().PersistentVolumes()
+			pvcClient := c.CoreV1().PersistentVolumeClaims(ns)
+
+			ginkgo.By("Creating initial PV and PVC")
+
+			// Configure csiDriver
+			defaultFSGroupPolicy := storagev1.ReadWriteOnceWithFSTypeFSGroupPolicy
+			csiDriverLabel := map[string]string{"e2e-test": f.UniqueName}
+			csiDriver := &storagev1.CSIDriver{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "inline-driver-" + string(uuid.NewUUID()),
+					Labels: csiDriverLabel,
+				},
+
+				Spec: storagev1.CSIDriverSpec{
+					VolumeLifecycleModes: []storagev1.VolumeLifecycleMode{
+						storagev1.VolumeLifecyclePersistent,
+					},
+					FSGroupPolicy: &defaultFSGroupPolicy,
+				},
+			}
+
+			pvNamePrefix := ns + "-"
+			pvHostPathConfig := e2epv.PersistentVolumeConfig{
+				NamePrefix: pvNamePrefix,
+				Labels:     volLabel,
+				PVSource: v1.PersistentVolumeSource{
+					CSI: &v1.CSIPersistentVolumeSource{
+						Driver:       csiDriver.Name,
+						VolumeHandle: "e2e-conformance",
+					},
+				},
+			}
+
+			numPVs, numPVCs := 1, 1
+			pvols, claims, err = e2epv.CreatePVsPVCs(ctx, numPVs, numPVCs, c, f.Timeouts, ns, pvHostPathConfig, pvcConfig)
+			framework.ExpectNoError(err, "Failed to create the requested storage resources")
+
+			ginkgo.By(fmt.Sprintf("Listing all PVs with the labelSelector: %q", volLabel.AsSelector().String()))
+			pvList, err := pvClient.List(ctx, metav1.ListOptions{LabelSelector: volLabel.AsSelector().String()})
+			framework.ExpectNoError(err, "Failed to list PVs with the labelSelector: %q", volLabel.AsSelector().String())
+			gomega.Expect(pvList.Items).To(gomega.HaveLen(1))
+			initialPV := pvList.Items[0]
+
+			ginkgo.By(fmt.Sprintf("Listing PVCs in namespace %q", ns))
+			pvcList, err := pvcClient.List(ctx, metav1.ListOptions{})
+			framework.ExpectNoError(err, "Failed to list PVCs with the labelSelector: %q", volLabel.AsSelector().String())
+			gomega.Expect(pvcList.Items).To(gomega.HaveLen(1))
+			initialPVC := pvcList.Items[0]
+
+			ginkgo.By(fmt.Sprintf("Getting PV %q", initialPV.Name))
+			retrievedPV, err := pvClient.Get(ctx, initialPV.Name, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Failed to get PV %q", initialPV.Name)
+			framework.Logf("retrievedPV: %#v", retrievedPV)
+
+			ginkgo.By("read pvc status")
+			pvcResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
+			pvcStatusUnstructured, err := f.DynamicClient.Resource(pvcResource).Namespace(ns).Get(ctx, initialPVC.Name, metav1.GetOptions{}, "status")
+			framework.ExpectNoError(err, "Failed to fetch the status of replica set %s in namespace %s", initialPVC.Name, ns)
+			pvcStatusBytes, err := json.Marshal(pvcStatusUnstructured)
+			framework.ExpectNoError(err, "Failed to marshal unstructured response. %v", err)
+			framework.Logf("pvcStatusBytes: %s", string(pvcStatusBytes))
+
+			ginkgo.By("read pv status")
+			pvResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumes"}
+			pvStatusUnstructured, err := f.DynamicClient.Resource(pvResource).Get(ctx, initialPV.Name, metav1.GetOptions{}, "status")
+			framework.ExpectNoError(err, "Failed to fetch the status of replica set %s in namespace %s", initialPV.Name, ns)
+			pvStatusBytes, err := json.Marshal(pvStatusUnstructured)
+			framework.ExpectNoError(err, "Failed to marshal unstructured response. %v", err)
+
+			framework.Logf("pvStatusBytes: %s", string(pvStatusBytes))
+
+			ginkgo.By("patching the PVC Status")
+			payload := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
+			framework.Logf("Patch payload: %v", string(payload))
+
+			patchedPVC, err := pvcClient.Patch(ctx, initialPVC.Name, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
+			framework.ExpectNoError(err, "Failed to patch status. %v", err)
+			framework.Logf("Patched status: %#v", patchedPVC.Status)
+
+		})
+
 	})
 
 	// testsuites/multivolume tests can now run with windows nodes
