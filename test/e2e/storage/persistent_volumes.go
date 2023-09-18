@@ -731,6 +731,13 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			framework.ExpectNoError(err, "Failed to patch status. %v", err)
 			framework.Logf("Patched status: %#v", patchedPVC.Status)
 
+			ginkgo.By("patching the PV Status")
+			payload = []byte(`{"status":{"message": "StatusPatched", "reason": "E2E"}}`)
+			framework.Logf("Patch payload: %v", string(payload))
+
+			patchedPV, err := pvClient.Patch(ctx, retrievedPV.Name, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
+			framework.ExpectNoError(err, "Failed to patch status. %v", err)
+			framework.Logf("Patched status: %#v", patchedPV.Status)
 		})
 
 	})
