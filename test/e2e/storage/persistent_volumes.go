@@ -680,7 +680,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 				PVSource: v1.PersistentVolumeSource{
 					CSI: &v1.CSIPersistentVolumeSource{
 						Driver:       csiDriver.Name,
-						VolumeHandle: "e2e-conformance",
+						VolumeHandle: "e2e-status-conformance",
 					},
 				},
 			}
@@ -738,6 +738,43 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			patchedPV, err := pvClient.Patch(ctx, retrievedPV.Name, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
 			framework.ExpectNoError(err, "Failed to patch status. %v", err)
 			framework.Logf("Patched status: %#v", patchedPV.Status)
+
+			ginkgo.By("updating the PVC Status")
+			var statusToUpdate, updatedStatus *v1.PersistentVolumeClaim
+
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				statusToUpdate, err = pvcClient.Get(ctx, patchedPVC.Name, metav1.GetOptions{})
+				framework.ExpectNoError(err, "Unable to retrieve pvc %s", patchedPVC.Name)
+
+				statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, v1.PersistentVolumeClaimCondition{
+					Type:    "StatusUpdate",
+					Status:  "True",
+					Reason:  "E2E",
+					Message: "Set from e2e test",
+				})
+
+				updatedStatus, err = pvcClient.UpdateStatus(ctx, statusToUpdate, metav1.UpdateOptions{})
+				return err
+			})
+			framework.ExpectNoError(err, "Failed to update status. %v", err)
+			framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
+
+			ginkgo.By("updating the PV Status")
+			var pvStatusToUpdate, pvUpdatedStatus *v1.PersistentVolume
+
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				pvStatusToUpdate, err = pvClient.Get(ctx, patchedPV.Name, metav1.GetOptions{})
+				framework.ExpectNoError(err, "Unable to retrieve pvc %s", patchedPV.Name)
+
+				pvStatusToUpdate.Status.Reason = "E2E"
+				pvStatusToUpdate.Status.Message = "StatusUpdated"
+
+				pvUpdatedStatus, err = pvClient.UpdateStatus(ctx, pvStatusToUpdate, metav1.UpdateOptions{})
+				return err
+			})
+			framework.ExpectNoError(err, "Failed to update status. %v", err)
+			framework.Logf("updatedStatus.Conditions: %#v", pvUpdatedStatus.Status)
+
 		})
 
 	})
