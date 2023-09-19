@@ -649,7 +649,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			framework.ExpectNoError(err, "Timeout while waiting to confirm PV %q deletion", retrievedPV.Name)
 		})
 
-		ginkgo.It("tkt59", func(ctx context.Context) {
+		ginkgo.It("should apply changes to a pv/pvc status", func(ctx context.Context) {
 
 			pvClient := c.CoreV1().PersistentVolumes()
 			pvcClient := c.CoreV1().PersistentVolumeClaims(ns)
