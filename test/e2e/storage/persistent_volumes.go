@@ -45,6 +45,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/onsi/gomega/gstruct"
 )
 
 // Validate PV/PVC, create and verify writer pod, delete the PVC, and validate the PV's
@@ -723,60 +724,68 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 
 			framework.Logf("pvStatusBytes: %s", string(pvStatusBytes))
 
-			ginkgo.By("patching the PVC Status")
-			payload := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True"}]}}`)
-			framework.Logf("Patch payload: %v", string(payload))
+			ginkgo.By(fmt.Sprintf("Patching %q Status", initialPVC.Name))
+			payload := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True", "reason":"E2E patchedStatus", "message":"Set from e2e test"}]}}`)
 
 			patchedPVC, err := pvcClient.Patch(ctx, initialPVC.Name, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
 			framework.ExpectNoError(err, "Failed to patch status. %v", err)
-			framework.Logf("Patched status: %#v", patchedPVC.Status)
 
-			ginkgo.By("patching the PV Status")
-			payload = []byte(`{"status":{"message": "StatusPatched", "reason": "E2E"}}`)
-			framework.Logf("Patch payload: %v", string(payload))
+			gomega.Expect(patchedPVC.Status.Conditions).To(gstruct.MatchElements(conditionType, gstruct.IgnoreExtras, gstruct.Elements{
+				"StatusPatched": gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+					"Message": gomega.ContainSubstring("Set from e2e test"),
+					"Reason":  gomega.ContainSubstring("E2E patchedStatus"),
+				}),
+			}), "Checking that updated status has been applied")
+
+			ginkgo.By(fmt.Sprintf("Patching %q Status", retrievedPV.Name))
+			payload = []byte(`{"status":{"message": "StatusPatched", "reason": "E2E patchStatus"}}`)
 
 			patchedPV, err := pvClient.Patch(ctx, retrievedPV.Name, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
-			framework.ExpectNoError(err, "Failed to patch status. %v", err)
-			framework.Logf("Patched status: %#v", patchedPV.Status)
+			framework.ExpectNoError(err, "Failed to patch %q status. %v", retrievedPV.Name, err)
+			gomega.Expect(patchedPV.Status.Reason).To(gomega.HaveValue(gomega.Equal("E2E patchStatus")), "Checking that patched status has been applied")
+			gomega.Expect(patchedPV.Status.Message).To(gomega.HaveValue(gomega.Equal("StatusPatched")), "Checking that patched status has been applied")
 
-			ginkgo.By("updating the PVC Status")
-			var statusToUpdate, updatedStatus *v1.PersistentVolumeClaim
+			ginkgo.By(fmt.Sprintf("Updating %q Status", patchedPVC.Name))
+			var statusToUpdate, updatedPVC *v1.PersistentVolumeClaim
 
 			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 				statusToUpdate, err = pvcClient.Get(ctx, patchedPVC.Name, metav1.GetOptions{})
 				framework.ExpectNoError(err, "Unable to retrieve pvc %s", patchedPVC.Name)
 
 				statusToUpdate.Status.Conditions = append(statusToUpdate.Status.Conditions, v1.PersistentVolumeClaimCondition{
-					Type:    "StatusUpdate",
+					Type:    "StatusUpdated",
 					Status:  "True",
-					Reason:  "E2E",
+					Reason:  "E2E updateStatus",
 					Message: "Set from e2e test",
 				})
 
-				updatedStatus, err = pvcClient.UpdateStatus(ctx, statusToUpdate, metav1.UpdateOptions{})
+				updatedPVC, err = pvcClient.UpdateStatus(ctx, statusToUpdate, metav1.UpdateOptions{})
 				return err
 			})
 			framework.ExpectNoError(err, "Failed to update status. %v", err)
-			framework.Logf("updatedStatus.Conditions: %#v", updatedStatus.Status.Conditions)
+			gomega.Expect(updatedPVC.Status.Conditions).To(gstruct.MatchElements(conditionType, gstruct.IgnoreExtras, gstruct.Elements{
+				"StatusUpdated": gstruct.MatchFields(gstruct.IgnoreExtras, gstruct.Fields{
+					"Message": gomega.ContainSubstring("Set from e2e test"),
+					"Reason":  gomega.ContainSubstring("E2E updateStatus"),
+				}),
+			}), "Checking that updated status has been applied")
 
-			ginkgo.By("updating the PV Status")
-			var pvStatusToUpdate, pvUpdatedStatus *v1.PersistentVolume
+			ginkgo.By(fmt.Sprintf("Updating %q Status", patchedPV.Name))
+			var pvToUpdate, updatedPV *v1.PersistentVolume
 
 			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-				pvStatusToUpdate, err = pvClient.Get(ctx, patchedPV.Name, metav1.GetOptions{})
+				pvToUpdate, err = pvClient.Get(ctx, patchedPV.Name, metav1.GetOptions{})
 				framework.ExpectNoError(err, "Unable to retrieve pvc %s", patchedPV.Name)
 
-				pvStatusToUpdate.Status.Reason = "E2E"
-				pvStatusToUpdate.Status.Message = "StatusUpdated"
-
-				pvUpdatedStatus, err = pvClient.UpdateStatus(ctx, pvStatusToUpdate, metav1.UpdateOptions{})
+				pvToUpdate.Status.Reason = "E2E updateStatus"
+				pvToUpdate.Status.Message = "StatusUpdated"
+				updatedPV, err = pvClient.UpdateStatus(ctx, pvToUpdate, metav1.UpdateOptions{})
 				return err
 			})
 			framework.ExpectNoError(err, "Failed to update status. %v", err)
-			framework.Logf("updatedStatus.Conditions: %#v", pvUpdatedStatus.Status)
-
+			gomega.Expect(updatedPV.Status.Reason).To(gomega.HaveValue(gomega.Equal("E2E updateStatus")), "Checking that updated status has been applied")
+			gomega.Expect(updatedPV.Status.Message).To(gomega.HaveValue(gomega.Equal("StatusUpdated")), "Checking that updated status has been applied")
 		})
-
 	})
 
 	// testsuites/multivolume tests can now run with windows nodes
@@ -934,4 +943,8 @@ func testPodSuccessOrFail(ctx context.Context, c clientset.Interface, t *framewo
 	}
 	framework.Logf("Pod %v succeeded ", pod.Name)
 	return nil
+}
+
+func conditionType(condition interface{}) string {
+	return string(condition.(v1.PersistentVolumeClaimCondition).Type)
 }
