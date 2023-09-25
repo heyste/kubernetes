@@ -18,7 +18,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -27,12 +26,15 @@ import (
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	clientset "k8s.io/client-go/kubernetes"
+	clientscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -702,27 +704,21 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			gomega.Expect(pvcList.Items).To(gomega.HaveLen(1))
 			initialPVC := pvcList.Items[0]
 
-			ginkgo.By(fmt.Sprintf("Getting PV %q", initialPV.Name))
-			retrievedPV, err := pvClient.Get(ctx, initialPV.Name, metav1.GetOptions{})
-			framework.ExpectNoError(err, "Failed to get PV %q", initialPV.Name)
-			framework.Logf("retrievedPV: %#v", retrievedPV)
-
-			ginkgo.By("read pvc status")
+			ginkgo.By(fmt.Sprintf("Read %q Status", initialPVC.Name))
 			pvcResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
-			pvcStatusUnstructured, err := f.DynamicClient.Resource(pvcResource).Namespace(ns).Get(ctx, initialPVC.Name, metav1.GetOptions{}, "status")
+			pvcUnstructured, err := f.DynamicClient.Resource(pvcResource).Namespace(ns).Get(ctx, initialPVC.Name, metav1.GetOptions{}, "status")
 			framework.ExpectNoError(err, "Failed to fetch the status of replica set %s in namespace %s", initialPVC.Name, ns)
-			pvcStatusBytes, err := json.Marshal(pvcStatusUnstructured)
-			framework.ExpectNoError(err, "Failed to marshal unstructured response. %v", err)
-			framework.Logf("pvcStatusBytes: %s", string(pvcStatusBytes))
+			retrievedPVC, err := unstructuredToPersistentVolumeClaim(pvcUnstructured)
+			framework.ExpectNoError(err, "Failed to retrieve %q status. %v", initialPV.Name)
+			gomega.Expect(string(retrievedPVC.Status.Phase)).To(gomega.HaveValue(gomega.Equal("Pending")), "Checking that the PVC status has been read")
 
-			ginkgo.By("read pv status")
+			ginkgo.By(fmt.Sprintf("Read %q Status", initialPV.Name))
 			pvResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumes"}
-			pvStatusUnstructured, err := f.DynamicClient.Resource(pvResource).Get(ctx, initialPV.Name, metav1.GetOptions{}, "status")
+			pvUnstructured, err := f.DynamicClient.Resource(pvResource).Get(ctx, initialPV.Name, metav1.GetOptions{}, "status")
 			framework.ExpectNoError(err, "Failed to fetch the status of replica set %s in namespace %s", initialPV.Name, ns)
-			pvStatusBytes, err := json.Marshal(pvStatusUnstructured)
-			framework.ExpectNoError(err, "Failed to marshal unstructured response. %v", err)
-
-			framework.Logf("pvStatusBytes: %s", string(pvStatusBytes))
+			retrievedPV, err := unstructuredToPersistentVolume(pvUnstructured)
+			framework.ExpectNoError(err, "Failed to retrieve %q status. %v", initialPV.Name)
+			gomega.Expect(string(retrievedPV.Status.Phase)).To(gomega.HaveValue(gomega.Equal("Available")), "Checking that the PV status has been read")
 
 			ginkgo.By(fmt.Sprintf("Patching %q Status", initialPVC.Name))
 			payload := []byte(`{"status":{"conditions":[{"type":"StatusPatched","status":"True", "reason":"E2E patchedStatus", "message":"Set from e2e test"}]}}`)
@@ -735,7 +731,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 					"Message": gomega.ContainSubstring("Set from e2e test"),
 					"Reason":  gomega.ContainSubstring("E2E patchedStatus"),
 				}),
-			}), "Checking that updated status has been applied")
+			}), "Checking that patched status has been applied")
 
 			ginkgo.By(fmt.Sprintf("Patching %q Status", retrievedPV.Name))
 			payload = []byte(`{"status":{"message": "StatusPatched", "reason": "E2E patchStatus"}}`)
@@ -947,4 +943,26 @@ func testPodSuccessOrFail(ctx context.Context, c clientset.Interface, t *framewo
 
 func conditionType(condition interface{}) string {
 	return string(condition.(v1.PersistentVolumeClaimCondition).Type)
+}
+
+func unstructuredToPersistentVolume(obj *unstructured.Unstructured) (*v1.PersistentVolume, error) {
+	json, err := runtime.Encode(unstructured.UnstructuredJSONScheme, obj)
+	if err != nil {
+		return nil, err
+	}
+	pv := &v1.PersistentVolume{}
+	err = runtime.DecodeInto(clientscheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), json, pv)
+
+	return pv, err
+}
+
+func unstructuredToPersistentVolumeClaim(obj *unstructured.Unstructured) (*v1.PersistentVolumeClaim, error) {
+	json, err := runtime.Encode(unstructured.UnstructuredJSONScheme, obj)
+	if err != nil {
+		return nil, err
+	}
+	pvc := &v1.PersistentVolumeClaim{}
+	err = runtime.DecodeInto(clientscheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), json, pvc)
+
+	return pvc, err
 }
