@@ -704,7 +704,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			gomega.Expect(pvcList.Items).To(gomega.HaveLen(1))
 			initialPVC := pvcList.Items[0]
 
-			ginkgo.By(fmt.Sprintf("Read %q Status", initialPVC.Name))
+			ginkgo.By(fmt.Sprintf("Reading %q Status", initialPVC.Name))
 			pvcResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
 			pvcUnstructured, err := f.DynamicClient.Resource(pvcResource).Namespace(ns).Get(ctx, initialPVC.Name, metav1.GetOptions{}, "status")
 			framework.ExpectNoError(err, "Failed to fetch the status of replica set %s in namespace %s", initialPVC.Name, ns)
@@ -712,7 +712,7 @@ var _ = utils.SIGDescribe("PersistentVolumes", func() {
 			framework.ExpectNoError(err, "Failed to retrieve %q status. %v", initialPV.Name)
 			gomega.Expect(string(retrievedPVC.Status.Phase)).To(gomega.HaveValue(gomega.Equal("Pending")), "Checking that the PVC status has been read")
 
-			ginkgo.By(fmt.Sprintf("Read %q Status", initialPV.Name))
+			ginkgo.By(fmt.Sprintf("Reading %q Status", initialPV.Name))
 			pvResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumes"}
 			pvUnstructured, err := f.DynamicClient.Resource(pvResource).Get(ctx, initialPV.Name, metav1.GetOptions{}, "status")
 			framework.ExpectNoError(err, "Failed to fetch the status of replica set %s in namespace %s", initialPV.Name, ns)
