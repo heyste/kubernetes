@@ -51,9 +51,9 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			vaAttachStatus := false
 
 			ginkgo.By(fmt.Sprintf("Create VolumeAttachment %q on node %q", vaName, vaNodeName))
-			newVa := NewVolumeAttachment(vaName, pvName, vaNodeName, vaAttachStatus)
+			initialVA := NewVolumeAttachment(vaName, pvName, vaNodeName, vaAttachStatus)
 
-			createdVA, err := f.ClientSet.StorageV1().VolumeAttachments().Create(ctx, newVa, metav1.CreateOptions{})
+			createdVA, err := f.ClientSet.StorageV1().VolumeAttachments().Create(ctx, initialVA, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("CreatedVA: %#v", createdVA)
 
@@ -72,6 +72,20 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			err = f.ClientSet.StorageV1().VolumeAttachments().Delete(ctx, vaName, metav1.DeleteOptions{})
 			framework.ExpectNoError(err)
 
+			randUID = "e2e-" + utilrand.String(5)
+			vaName = "va-" + randUID
+			pvName = "pv-" + randUID
+
+			ginkgo.By(fmt.Sprintf("Create VolumeAttachment %q on node %q", vaName, vaNodeName))
+			secondVA := NewVolumeAttachment(vaName, pvName, vaNodeName, vaAttachStatus)
+
+			replacementVA, err := f.ClientSet.StorageV1().VolumeAttachments().Create(ctx, secondVA, metav1.CreateOptions{})
+			framework.ExpectNoError(err)
+			framework.Logf("CreatedVA: %#v", replacementVA)
+
+			ginkgo.By("DeleteCollection of VolumeAttachments")
+			err = f.ClientSet.StorageV1().VolumeAttachments().DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{})
+			framework.ExpectNoError(err)
 		})
 	})
 })
