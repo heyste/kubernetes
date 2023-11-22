@@ -18,6 +18,8 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,7 +34,7 @@ import (
 
 var _ = utils.SIGDescribe("VolumeAttachment", func() {
 
-	f := framework.NewDefaultFramework("csinodes")
+	f := framework.NewDefaultFramework("volumeattachment")
 
 	ginkgo.Describe("Conformance", func() {
 
@@ -41,29 +43,39 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			randUID := "e2e-" + utilrand.String(5)
 			vaName := "va-" + randUID
 			pvName := "pv-" + randUID
-			vaNodeName := "kind-worker"
+
+			nodes, err := f.ClientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+			framework.ExpectNoError(err)
+			randNode := rand.Intn(len(nodes.Items))
+			vaNodeName := nodes.Items[randNode].Name
 			vaAttachStatus := false
 
+			ginkgo.By(fmt.Sprintf("Create VolumeAttachment %q on node %q", vaName, vaNodeName))
 			newVa := NewVolumeAttachment(vaName, pvName, vaNodeName, vaAttachStatus)
-			// https://github.com/kubernetes/kubernetes/blob/master/pkg/controller/volume/attachdetach/attach_detach_controller_test.go#L537-L538
 
 			createdVA, err := f.ClientSet.StorageV1().VolumeAttachments().Create(ctx, newVa, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("CreatedVA: %#v", createdVA)
 
+			ginkgo.By(fmt.Sprintf("Get VolumeAttachment %q on node %q", vaName, vaNodeName))
 			retrievedVA, err := f.ClientSet.StorageV1().VolumeAttachments().Get(ctx, vaName, metav1.GetOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("RetrievedVA: %#v", retrievedVA)
 
+			ginkgo.By("List VolumeAttachments")
 			listVolumeAttachments, err := f.ClientSet.StorageV1().VolumeAttachments().List(ctx, metav1.ListOptions{})
 			framework.ExpectNoError(err)
 
 			framework.Logf("list VolumeAttachments: %#v", listVolumeAttachments)
+
+			ginkgo.By(fmt.Sprintf("Delete VolumeAttachment %q on node %q", vaName, vaNodeName))
+			err = f.ClientSet.StorageV1().VolumeAttachments().Delete(ctx, vaName, metav1.DeleteOptions{})
+			framework.ExpectNoError(err)
+
 		})
 	})
 })
 
-// https://github.com/kubernetes/kubernetes/blob/master/pkg/controller/volume/attachdetach/testing/testvolumespec.go#L261
 func NewVolumeAttachment(vaName, pvName, nodeName string, status bool) *storagev1.VolumeAttachment {
 	return &storagev1.VolumeAttachment{
 
@@ -72,7 +84,7 @@ func NewVolumeAttachment(vaName, pvName, nodeName string, status bool) *storagev
 			Name: vaName,
 		},
 		Spec: storagev1.VolumeAttachmentSpec{
-			Attacher: "test.storage.k8s.io",
+			Attacher: "e2e-test.storage.k8s.io",
 			NodeName: nodeName,
 			Source: storagev1.VolumeAttachmentSource{
 				PersistentVolumeName: &pvName,
