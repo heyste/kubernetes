@@ -76,15 +76,21 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			vaName = "va-" + randUID
 			pvName = "pv-" + randUID
 
-			ginkgo.By(fmt.Sprintf("Create VolumeAttachment %q on node %q", vaName, vaNodeName))
+			ginkgo.By(fmt.Sprintf("Create replacement VolumeAttachment %q on node %q", vaName, vaNodeName))
 			secondVA := NewVolumeAttachment(vaName, pvName, vaNodeName, vaAttachStatus)
 
 			replacementVA, err := f.ClientSet.StorageV1().VolumeAttachments().Create(ctx, secondVA, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("CreatedVA: %#v", replacementVA)
 
+			ginkgo.By(fmt.Sprintf("Patch VolumeAttachment %q on node %q", vaName, vaNodeName))
+			payload := "{\"metadata\":{\"labels\":{\"" + replacementVA.Name + "\":\"patched\"}}}"
+			patchedVA, err := f.ClientSet.StorageV1().VolumeAttachments().Patch(ctx, replacementVA.Name, types.MergePatchType, []byte(payload), metav1.PatchOptions{})
+			framework.ExpectNoError(err)
+			framework.Logf("patchedVA: %#v", patchedVA)
+
 			ginkgo.By("DeleteCollection of VolumeAttachments")
-			err = f.ClientSet.StorageV1().VolumeAttachments().DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{})
+			err = f.ClientSet.StorageV1().VolumeAttachments().DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: replacementVA.Name + "=patched"})
 			framework.ExpectNoError(err)
 		})
 	})
