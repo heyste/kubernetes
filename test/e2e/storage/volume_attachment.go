@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 
@@ -89,8 +90,22 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			framework.ExpectNoError(err)
 			framework.Logf("patchedVA: %#v", patchedVA)
 
+			ginkgo.By(fmt.Sprintf("Update the VolumeAttachment %q on node %q", patchedVA.Name, vaNodeName))
+			var updatedVA *storagev1.VolumeAttachment
+
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				currentVA, err := f.ClientSet.StorageV1().VolumeAttachments().Get(ctx, patchedVA.Name, metav1.GetOptions{})
+				framework.ExpectNoError(err, "Unable to get VolumeAttachment %q", patchedVA.Name)
+				currentVA.Labels[patchedVA.Name] = "updated"
+				updatedVA, err = f.ClientSet.StorageV1().VolumeAttachments().Update(ctx, currentVA, metav1.UpdateOptions{})
+
+				return err
+			})
+			framework.ExpectNoError(err, "failed to update VolumeAttachment %q on node %q", patchedVA.Name, vaNodeName)
+			framework.Logf("updatedVA: %#v", updatedVA)
+
 			ginkgo.By("DeleteCollection of VolumeAttachments")
-			err = f.ClientSet.StorageV1().VolumeAttachments().DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: replacementVA.Name + "=patched"})
+			err = f.ClientSet.StorageV1().VolumeAttachments().DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: replacementVA.Name + "=updated"})
 			framework.ExpectNoError(err)
 		})
 	})
