@@ -41,6 +41,8 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 
 		ginkgo.It("tkt53", func(ctx context.Context) {
 
+			vaClient := f.ClientSet.StorageV1().VolumeAttachments()
+
 			randUID := "e2e-" + utilrand.String(5)
 			vaName := "va-" + randUID
 			pvName := "pv-" + randUID
@@ -54,23 +56,23 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			ginkgo.By(fmt.Sprintf("Create VolumeAttachment %q on node %q", vaName, vaNodeName))
 			initialVA := NewVolumeAttachment(vaName, pvName, vaNodeName, vaAttachStatus)
 
-			createdVA, err := f.ClientSet.StorageV1().VolumeAttachments().Create(ctx, initialVA, metav1.CreateOptions{})
+			createdVA, err := vaClient.Create(ctx, initialVA, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("CreatedVA: %#v", createdVA)
 
 			ginkgo.By(fmt.Sprintf("Get VolumeAttachment %q on node %q", vaName, vaNodeName))
-			retrievedVA, err := f.ClientSet.StorageV1().VolumeAttachments().Get(ctx, vaName, metav1.GetOptions{})
+			retrievedVA, err := vaClient.Get(ctx, vaName, metav1.GetOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("RetrievedVA: %#v", retrievedVA)
 
 			ginkgo.By("List VolumeAttachments")
-			listVolumeAttachments, err := f.ClientSet.StorageV1().VolumeAttachments().List(ctx, metav1.ListOptions{})
+			listVolumeAttachments, err := vaClient.List(ctx, metav1.ListOptions{})
 			framework.ExpectNoError(err)
 
 			framework.Logf("list VolumeAttachments: %#v", listVolumeAttachments)
 
 			ginkgo.By(fmt.Sprintf("Delete VolumeAttachment %q on node %q", vaName, vaNodeName))
-			err = f.ClientSet.StorageV1().VolumeAttachments().Delete(ctx, vaName, metav1.DeleteOptions{})
+			err = vaClient.Delete(ctx, vaName, metav1.DeleteOptions{})
 			framework.ExpectNoError(err)
 
 			randUID = "e2e-" + utilrand.String(5)
@@ -80,13 +82,13 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			ginkgo.By(fmt.Sprintf("Create replacement VolumeAttachment %q on node %q", vaName, vaNodeName))
 			secondVA := NewVolumeAttachment(vaName, pvName, vaNodeName, vaAttachStatus)
 
-			replacementVA, err := f.ClientSet.StorageV1().VolumeAttachments().Create(ctx, secondVA, metav1.CreateOptions{})
+			replacementVA, err := vaClient.Create(ctx, secondVA, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("CreatedVA: %#v", replacementVA)
 
 			ginkgo.By(fmt.Sprintf("Patch VolumeAttachment %q on node %q", vaName, vaNodeName))
 			payload := "{\"metadata\":{\"labels\":{\"" + replacementVA.Name + "\":\"patched\"}}}"
-			patchedVA, err := f.ClientSet.StorageV1().VolumeAttachments().Patch(ctx, replacementVA.Name, types.MergePatchType, []byte(payload), metav1.PatchOptions{})
+			patchedVA, err := vaClient.Patch(ctx, replacementVA.Name, types.MergePatchType, []byte(payload), metav1.PatchOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("patchedVA: %#v", patchedVA)
 
@@ -94,10 +96,10 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			var updatedVA *storagev1.VolumeAttachment
 
 			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-				currentVA, err := f.ClientSet.StorageV1().VolumeAttachments().Get(ctx, patchedVA.Name, metav1.GetOptions{})
+				currentVA, err := vaClient.Get(ctx, patchedVA.Name, metav1.GetOptions{})
 				framework.ExpectNoError(err, "Unable to get VolumeAttachment %q", patchedVA.Name)
 				currentVA.Labels[patchedVA.Name] = "updated"
-				updatedVA, err = f.ClientSet.StorageV1().VolumeAttachments().Update(ctx, currentVA, metav1.UpdateOptions{})
+				updatedVA, err = vaClient.Update(ctx, currentVA, metav1.UpdateOptions{})
 
 				return err
 			})
@@ -105,7 +107,7 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			framework.Logf("updatedVA: %#v", updatedVA)
 
 			ginkgo.By("DeleteCollection of VolumeAttachments")
-			err = f.ClientSet.StorageV1().VolumeAttachments().DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: replacementVA.Name + "=updated"})
+			err = vaClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: replacementVA.Name + "=updated"})
 			framework.ExpectNoError(err)
 		})
 	})
