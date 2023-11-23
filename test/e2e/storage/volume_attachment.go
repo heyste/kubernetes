@@ -30,7 +30,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 
 	"github.com/onsi/ginkgo/v2"
-	// "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 )
 
 var _ = utils.SIGDescribe("VolumeAttachment", func() {
@@ -91,6 +91,7 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			patchedVA, err := vaClient.Patch(ctx, replacementVA.Name, types.MergePatchType, []byte(payload), metav1.PatchOptions{})
 			framework.ExpectNoError(err)
 			framework.Logf("patchedVA: %#v", patchedVA)
+			gomega.Expect(patchedVA.Labels).To(gomega.HaveKeyWithValue(patchedVA.Name, "patched"), "Checking that patched label has been applied")
 
 			ginkgo.By(fmt.Sprintf("Update the VolumeAttachment %q on node %q", patchedVA.Name, vaNodeName))
 			var updatedVA *storagev1.VolumeAttachment
@@ -105,6 +106,7 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			})
 			framework.ExpectNoError(err, "failed to update VolumeAttachment %q on node %q", patchedVA.Name, vaNodeName)
 			framework.Logf("updatedVA: %#v", updatedVA)
+			gomega.Expect(updatedVA.Labels).To(gomega.HaveKeyWithValue(updatedVA.Name, "updated"), "Checking that updated label has been applied")
 
 			ginkgo.By("DeleteCollection of VolumeAttachments")
 			err = vaClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: replacementVA.Name + "=updated"})
