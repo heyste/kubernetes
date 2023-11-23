@@ -65,11 +65,16 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			framework.ExpectNoError(err)
 			framework.Logf("RetrievedVA: %#v", retrievedVA)
 
-			ginkgo.By("List VolumeAttachments")
-			listVolumeAttachments, err := vaClient.List(ctx, metav1.ListOptions{})
-			framework.ExpectNoError(err)
+			ginkgo.By(fmt.Sprintf("Patch VolumeAttachment %q on node %q", vaName, vaNodeName))
+			payload := "{\"metadata\":{\"labels\":{\"" + retrievedVA.Name + "\":\"patched\"}}}"
+			patchedVA, err := vaClient.Patch(ctx, retrievedVA.Name, types.MergePatchType, []byte(payload), metav1.PatchOptions{})
+			framework.ExpectNoError(err, "Failed to patch PV %q", vaName)
+			gomega.Expect(patchedVA.Labels).To(gomega.HaveKeyWithValue(patchedVA.Name, "patched"), "Checking that patched label has been applied")
 
-			framework.Logf("list VolumeAttachments: %#v", listVolumeAttachments)
+			ginkgo.By("List VolumeAttachments")
+			vaList, err := vaClient.List(ctx, metav1.ListOptions{LabelSelector: patchedVA.Name + "=patched"})
+			framework.ExpectNoError(err)
+			gomega.Expect(vaList.Items).To(gomega.HaveLen(1))
 
 			ginkgo.By(fmt.Sprintf("Delete VolumeAttachment %q on node %q", vaName, vaNodeName))
 			err = vaClient.Delete(ctx, vaName, metav1.DeleteOptions{})
@@ -86,26 +91,18 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			framework.ExpectNoError(err)
 			framework.Logf("CreatedVA: %#v", replacementVA)
 
-			ginkgo.By(fmt.Sprintf("Patch VolumeAttachment %q on node %q", vaName, vaNodeName))
-			payload := "{\"metadata\":{\"labels\":{\"" + replacementVA.Name + "\":\"patched\"}}}"
-			patchedVA, err := vaClient.Patch(ctx, replacementVA.Name, types.MergePatchType, []byte(payload), metav1.PatchOptions{})
-			framework.ExpectNoError(err)
-			framework.Logf("patchedVA: %#v", patchedVA)
-			gomega.Expect(patchedVA.Labels).To(gomega.HaveKeyWithValue(patchedVA.Name, "patched"), "Checking that patched label has been applied")
-
-			ginkgo.By(fmt.Sprintf("Update the VolumeAttachment %q on node %q", patchedVA.Name, vaNodeName))
+			ginkgo.By(fmt.Sprintf("Update the VolumeAttachment %q on node %q", replacementVA.Name, vaNodeName))
 			var updatedVA *storagev1.VolumeAttachment
 
 			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-				currentVA, err := vaClient.Get(ctx, patchedVA.Name, metav1.GetOptions{})
+				currentVA, err := vaClient.Get(ctx, replacementVA.Name, metav1.GetOptions{})
 				framework.ExpectNoError(err, "Unable to get VolumeAttachment %q", patchedVA.Name)
-				currentVA.Labels[patchedVA.Name] = "updated"
+				currentVA.Labels = map[string]string{replacementVA.Name: "updated"}
 				updatedVA, err = vaClient.Update(ctx, currentVA, metav1.UpdateOptions{})
 
 				return err
 			})
-			framework.ExpectNoError(err, "failed to update VolumeAttachment %q on node %q", patchedVA.Name, vaNodeName)
-			framework.Logf("updatedVA: %#v", updatedVA)
+			framework.ExpectNoError(err, "failed to update VolumeAttachment %q on node %q", replacementVA.Name, vaNodeName)
 			gomega.Expect(updatedVA.Labels).To(gomega.HaveKeyWithValue(updatedVA.Name, "updated"), "Checking that updated label has been applied")
 
 			ginkgo.By("DeleteCollection of VolumeAttachments")
