@@ -39,7 +39,7 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 
 	ginkgo.Describe("Conformance", func() {
 
-		ginkgo.It("tkt53", func(ctx context.Context) {
+		ginkgo.It("should run through the lifecycle of a VolumeAttachment", func(ctx context.Context) {
 
 			vaClient := f.ClientSet.StorageV1().VolumeAttachments()
 
@@ -48,7 +48,7 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			pvName := "pv-" + randUID
 
 			nodes, err := f.ClientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "failed to list nodes")
 			randNode := rand.Intn(len(nodes.Items))
 			vaNodeName := nodes.Items[randNode].Name
 			vaAttachStatus := false
@@ -57,28 +57,28 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			initialVA := NewVolumeAttachment(vaName, pvName, vaNodeName, vaAttachStatus)
 
 			createdVA, err := vaClient.Create(ctx, initialVA, metav1.CreateOptions{})
-			framework.ExpectNoError(err)
-			framework.Logf("CreatedVA: %#v", createdVA)
+			framework.ExpectNoError(err, "failed to create VolumeAttachment %q", vaName)
+			gomega.Expect(createdVA.Name).To(gomega.Equal(vaName), "Checking that the created VolumeAttachment has the correct name")
 
 			ginkgo.By(fmt.Sprintf("Get VolumeAttachment %q on node %q", vaName, vaNodeName))
 			retrievedVA, err := vaClient.Get(ctx, vaName, metav1.GetOptions{})
-			framework.ExpectNoError(err)
-			framework.Logf("RetrievedVA: %#v", retrievedVA)
+			framework.ExpectNoError(err, "failed to get VolumeAttachment %q", vaName)
+			gomega.Expect(retrievedVA.Name).To(gomega.Equal(vaName), "Checking that create VolumeAttachment has the correct name")
 
 			ginkgo.By(fmt.Sprintf("Patch VolumeAttachment %q on node %q", vaName, vaNodeName))
 			payload := "{\"metadata\":{\"labels\":{\"" + retrievedVA.Name + "\":\"patched\"}}}"
 			patchedVA, err := vaClient.Patch(ctx, retrievedVA.Name, types.MergePatchType, []byte(payload), metav1.PatchOptions{})
-			framework.ExpectNoError(err, "Failed to patch PV %q", vaName)
+			framework.ExpectNoError(err, "failed to patch PV %q", vaName)
 			gomega.Expect(patchedVA.Labels).To(gomega.HaveKeyWithValue(patchedVA.Name, "patched"), "Checking that patched label has been applied")
 
-			ginkgo.By("List VolumeAttachments")
+			ginkgo.By(fmt.Sprintf("List VolumeAttachments with %q label", patchedVA.Name+"=patched"))
 			vaList, err := vaClient.List(ctx, metav1.ListOptions{LabelSelector: patchedVA.Name + "=patched"})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "failed to list VolumeAttachments")
 			gomega.Expect(vaList.Items).To(gomega.HaveLen(1))
 
 			ginkgo.By(fmt.Sprintf("Delete VolumeAttachment %q on node %q", vaName, vaNodeName))
 			err = vaClient.Delete(ctx, vaName, metav1.DeleteOptions{})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "failed to delete VolumeAttachment %q", vaName)
 
 			randUID = "e2e-" + utilrand.String(5)
 			vaName = "va-" + randUID
@@ -89,14 +89,14 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 
 			replacementVA, err := vaClient.Create(ctx, secondVA, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
-			framework.Logf("CreatedVA: %#v", replacementVA)
+			gomega.Expect(replacementVA.Name).To(gomega.Equal(vaName), "Checking that the replacement VolumeAttachment has the correct name")
 
 			ginkgo.By(fmt.Sprintf("Update the VolumeAttachment %q on node %q", replacementVA.Name, vaNodeName))
 			var updatedVA *storagev1.VolumeAttachment
 
 			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 				currentVA, err := vaClient.Get(ctx, replacementVA.Name, metav1.GetOptions{})
-				framework.ExpectNoError(err, "Unable to get VolumeAttachment %q", patchedVA.Name)
+				framework.ExpectNoError(err, "failed to get VolumeAttachment %q", patchedVA.Name)
 				currentVA.Labels = map[string]string{replacementVA.Name: "updated"}
 				updatedVA, err = vaClient.Update(ctx, currentVA, metav1.UpdateOptions{})
 
@@ -105,9 +105,9 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			framework.ExpectNoError(err, "failed to update VolumeAttachment %q on node %q", replacementVA.Name, vaNodeName)
 			gomega.Expect(updatedVA.Labels).To(gomega.HaveKeyWithValue(updatedVA.Name, "updated"), "Checking that updated label has been applied")
 
-			ginkgo.By("DeleteCollection of VolumeAttachments")
+			ginkgo.By(fmt.Sprintf("DeleteCollection of VolumeAttachments with %q label", replacementVA.Name+"=updated"))
 			err = vaClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: replacementVA.Name + "=updated"})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "failed to delete VolumeAttachment collection")
 		})
 	})
 })
