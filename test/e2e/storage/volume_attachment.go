@@ -20,9 +20,11 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"time"
 
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/util/retry"
@@ -71,14 +73,39 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			framework.ExpectNoError(err, "failed to patch PV %q", vaName)
 			gomega.Expect(patchedVA.Labels).To(gomega.HaveKeyWithValue(patchedVA.Name, "patched"), "Checking that patched label has been applied")
 
-			ginkgo.By(fmt.Sprintf("List VolumeAttachments with %q label", patchedVA.Name+"=patched"))
-			vaList, err := vaClient.List(ctx, metav1.ListOptions{LabelSelector: patchedVA.Name + "=patched"})
+			patchedSelector := labels.Set{patchedVA.Name: "patched"}.AsSelector().String()
+			ginkgo.By(fmt.Sprintf("List VolumeAttachments with %q label", patchedSelector))
+			vaList, err := vaClient.List(ctx, metav1.ListOptions{LabelSelector: patchedSelector})
 			framework.ExpectNoError(err, "failed to list VolumeAttachments")
 			gomega.Expect(vaList.Items).To(gomega.HaveLen(1))
 
 			ginkgo.By(fmt.Sprintf("Delete VolumeAttachment %q on node %q", vaName, vaNodeName))
 			err = vaClient.Delete(ctx, vaName, metav1.DeleteOptions{})
 			framework.ExpectNoError(err, "failed to delete VolumeAttachment %q", vaName)
+
+			ginkgo.By(fmt.Sprintf("Confirm deletion of VolumeAttachment %q on node %q", vaName, vaNodeName))
+
+			type state struct {
+				VolumeAttachments []storagev1.VolumeAttachment
+			}
+
+			err = framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*state, error) {
+				vaList, err := vaClient.List(ctx, metav1.ListOptions{LabelSelector: patchedSelector})
+				if err != nil {
+					return nil, fmt.Errorf("failed to list VolumeAttachment: %w", err)
+				}
+				return &state{
+					VolumeAttachments: vaList.Items,
+				}, nil
+			})).WithTimeout(30 * time.Second).Should(framework.MakeMatcher(func(s *state) (func() string, error) {
+				if len(s.VolumeAttachments) == 0 {
+					return nil, nil
+				}
+				return func() string {
+					return fmt.Sprintf("Expected VolumeAttachment to be deleted, found %q", s.VolumeAttachments[0].Name)
+				}, nil
+			}))
+			framework.ExpectNoError(err, "Timeout while waiting to confirm VolumeAttachment %q deletion", vaName)
 
 			randUID = "e2e-" + utilrand.String(5)
 			vaName = "va-" + randUID
@@ -105,9 +132,30 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 			framework.ExpectNoError(err, "failed to update VolumeAttachment %q on node %q", replacementVA.Name, vaNodeName)
 			gomega.Expect(updatedVA.Labels).To(gomega.HaveKeyWithValue(updatedVA.Name, "updated"), "Checking that updated label has been applied")
 
-			ginkgo.By(fmt.Sprintf("DeleteCollection of VolumeAttachments with %q label", replacementVA.Name+"=updated"))
-			err = vaClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: replacementVA.Name + "=updated"})
+			updatedSelector := labels.Set{patchedVA.Name: "updated"}.AsSelector().String()
+			ginkgo.By(fmt.Sprintf("DeleteCollection of VolumeAttachments with %q label", updatedSelector))
+			err = vaClient.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: updatedSelector})
 			framework.ExpectNoError(err, "failed to delete VolumeAttachment collection")
+
+			ginkgo.By(fmt.Sprintf("Confirm deletion of VolumeAttachments with %q label", updatedSelector))
+
+			err = framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*state, error) {
+				vaList, err := vaClient.List(ctx, metav1.ListOptions{LabelSelector: updatedSelector})
+				if err != nil {
+					return nil, fmt.Errorf("failed to list VolumeAttachment: %w", err)
+				}
+				return &state{
+					VolumeAttachments: vaList.Items,
+				}, nil
+			})).WithTimeout(30 * time.Second).Should(framework.MakeMatcher(func(s *state) (func() string, error) {
+				if len(s.VolumeAttachments) == 0 {
+					return nil, nil
+				}
+				return func() string {
+					return fmt.Sprintf("Expected VolumeAttachment to be deleted, found %q", s.VolumeAttachments[0].Name)
+				}, nil
+			}))
+			framework.ExpectNoError(err, "Timeout while waiting to confirm VolumeAttachment %q deletion", vaName)
 		})
 	})
 })
