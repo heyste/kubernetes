@@ -190,14 +190,21 @@ var _ = utils.SIGDescribe("VolumeAttachment", func() {
 
 			ginkgo.By(fmt.Sprintf("Reading %q Status", patchedVA.Name))
 			vaResource := schema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "volumeattachments"}
-			pvcUnstructured, err := f.DynamicClient.Resource(vaResource).Get(ctx, patchedVA.Name, metav1.GetOptions{}, "status")
-
+			vaUnstructured, err := f.DynamicClient.Resource(vaResource).Get(ctx, patchedVA.Name, metav1.GetOptions{}, "status")
 			framework.ExpectNoError(err, "Failed to fetch the status of %q VolumeAttachment", patchedVA.Name)
 
 			retrievedVA := &storagev1.VolumeAttachment{}
-			err = runtime.DefaultUnstructuredConverter.FromUnstructured(pvcUnstructured.UnstructuredContent(), &retrievedVA)
+			err = runtime.DefaultUnstructuredConverter.FromUnstructured(vaUnstructured.UnstructuredContent(), &retrievedVA)
 			framework.ExpectNoError(err, "Failed to retrieve %q status.", patchedVA.Name)
 			gomega.Expect(retrievedVA.Status.Attached).To(gomega.Equal(false), "Checking that the VolumeAttachment status has been read")
+
+			ginkgo.By(fmt.Sprintf("Patching %q Status", patchedVA.Name))
+			statusPayload := []byte(`{"status":{"attached":true}}`)
+
+			vaPatched, err := vaClient.Patch(ctx, patchedVA.Name, types.MergePatchType, statusPayload, metav1.PatchOptions{}, "status")
+			framework.ExpectNoError(err, "Failed to patch status.")
+			gomega.Expect(vaPatched.Status.Attached).To(gomega.Equal(true), "Checking that the VolumeAttachment status has been patched")
+			framework.Logf("vaStatusPatched: %#v", vaPatched)
 
 			ginkgo.By(fmt.Sprintf("Delete VolumeAttachment %q on node %q", vaName, vaNodeName))
 			err = vaClient.Delete(ctx, vaName, metav1.DeleteOptions{})
