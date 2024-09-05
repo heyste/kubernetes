@@ -838,6 +838,39 @@ var _ = SIGDescribe("ServiceAccounts", func() {
 		gomega.Expect(updatedServiceAccount.AutomountServiceAccountToken).To(gomega.Equal(utilptr.Bool(true)), "Failed to set AutomountServiceAccountToken")
 		framework.Logf("AutomountServiceAccountToken: %v", *updatedServiceAccount.AutomountServiceAccountToken)
 	})
+
+	ginkgo.It("tkt46", func(ctx context.Context) {
+		ns := f.Namespace.Name
+		saClient := f.ClientSet.CoreV1().ServiceAccounts(ns)
+		saName := "e2e-sa-" + utilrand.String(5)
+
+		ginkgo.By(fmt.Sprintf("Creating a Serviceaccount %q in namespace %q", saName, ns))
+		_, err := f.ClientSet.CoreV1().ServiceAccounts(ns).Create(context.TODO(), &v1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: saName,
+			},
+		}, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "Unable to create serviceaccount %q", saName)
+
+		ginkgo.By(fmt.Sprintf("Creating a ServiceaccountToken %q in namespace %q", saName, ns))
+		request := &authenticationv1.TokenRequest{}
+		response, err := saClient.CreateToken(context.TODO(), saName, request, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "Unable to create a SubjectAccessReview")
+		if len(response.Status.Token) == 0 {
+			framework.Logf("failed to create token: no token in server response")
+		}
+		framework.Logf("response: %#v \n", response)
+
+		ginkgo.By(fmt.Sprintf("Creating a TokenReview for %q in namespace %q", response.Name, ns))
+		tokenReview := &authenticationv1.TokenReview{Spec: authenticationv1.TokenReviewSpec{Token: response.Status.Token}}
+		tokenReview, err = f.ClientSet.AuthenticationV1().TokenReviews().Create(ctx, tokenReview, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		if !tokenReview.Status.Authenticated {
+			framework.Fail("tokenReview is not authenticated")
+		}
+		gomega.Expect(tokenReview.Status.Error).To(gomega.BeEmpty())
+		framework.Logf("tokenReview: %#v \n", tokenReview)
+	})
 })
 
 var reportLogsParser = regexp.MustCompile("([a-zA-Z0-9-_]*)=([a-zA-Z0-9-_]*)$")
