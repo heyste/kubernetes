@@ -839,7 +839,7 @@ var _ = SIGDescribe("ServiceAccounts", func() {
 		framework.Logf("AutomountServiceAccountToken: %v", *updatedServiceAccount.AutomountServiceAccountToken)
 	})
 
-	ginkgo.It("tkt46", func(ctx context.Context) {
+	ginkgo.It("should create a serviceAccountToken and ensure a successful TokenReview", func(ctx context.Context) {
 		ns := f.Namespace.Name
 		saClient := f.ClientSet.CoreV1().ServiceAccounts(ns)
 		saName := "e2e-sa-" + utilrand.String(5)
@@ -855,21 +855,15 @@ var _ = SIGDescribe("ServiceAccounts", func() {
 		ginkgo.By(fmt.Sprintf("Creating a ServiceaccountToken %q in namespace %q", saName, ns))
 		request := &authenticationv1.TokenRequest{}
 		response, err := saClient.CreateToken(context.TODO(), saName, request, metav1.CreateOptions{})
-		framework.ExpectNoError(err, "Unable to create a SubjectAccessReview")
-		if len(response.Status.Token) == 0 {
-			framework.Logf("failed to create token: no token in server response")
-		}
-		framework.Logf("response: %#v \n", response)
+		framework.ExpectNoError(err, "Unable to create serviceAccountToken")
+		gomega.Expect(response.Status.Token).ToNot(gomega.BeEmpty(), "confirm that a Token has been created")
 
 		ginkgo.By(fmt.Sprintf("Creating a TokenReview for %q in namespace %q", response.Name, ns))
 		tokenReview := &authenticationv1.TokenReview{Spec: authenticationv1.TokenReviewSpec{Token: response.Status.Token}}
 		tokenReview, err = f.ClientSet.AuthenticationV1().TokenReviews().Create(ctx, tokenReview, metav1.CreateOptions{})
-		framework.ExpectNoError(err)
-		if !tokenReview.Status.Authenticated {
-			framework.Fail("tokenReview is not authenticated")
-		}
-		gomega.Expect(tokenReview.Status.Error).To(gomega.BeEmpty())
-		framework.Logf("tokenReview: %#v \n", tokenReview)
+		framework.ExpectNoError(err, "failed to create a TokenReview")
+		gomega.Expect(tokenReview.Status.Authenticated).To(gomega.BeTrue(), "confirm that the TokenReview is authenticated")
+		gomega.Expect(tokenReview.Status.Error).To(gomega.BeEmpty(), "confirm that there are no TokenReview errors")
 	})
 })
 
